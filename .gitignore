@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+data/training.db
+data/training.db-wal
+data/training.db-shm
+.venv/
