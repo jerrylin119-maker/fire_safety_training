@@ -98,44 +98,54 @@ def render_test(phase: str):
     answers_key = "pretest_answers" if phase == "pre" else "posttest_answers"
 
     st.header("🧠 迷思破除前測" if phase == "pre" else "🧠 觀念後測")
-    if phase == "pre":
-        st.caption("提交後僅會顯示您的「分數」，正確解答將於課程最後的學習卡中一併公布，請放心作答！")
-    else:
-        st.caption("這是與前測相同的題目，看看你的觀念進步了多少！")
+    score_key = "pretest_score" if phase == "pre" else "posttest_score"
+    already_done = st.session_state[score_key] is not None
 
-    with st.form(f"{phase}_test_form"):
-        selections = {}
-        for i, q in enumerate(questions):
-            st.subheader(f"Q{i + 1}. {q['question']}")
-            choice = st.radio(
-                "選項", q["options"], index=None,
-                key=f"{phase}_{q['id']}", label_visibility="collapsed",
-            )
-            selections[q["id"]] = choice
-        submitted = st.form_submit_button("提交答案", width="stretch")
-
-    if submitted:
-        if any(v is None for v in selections.values()):
-            st.error("請完成所有題目後再提交。")
-            return
-        correctness = []
-        for q in questions:
-            selected_index = q["options"].index(selections[q["id"]])
-            is_correct = selected_index == q["correct_index"]
-            correctness.append(is_correct)
-            db.save_test_answer(st.session_state.student_id, phase, q["id"], selected_index, is_correct)
-
-        score = score_from_answers(correctness)
-        st.session_state[answers_key] = selections
-
+    if not already_done:
         if phase == "pre":
-            st.session_state.pretest_score = score
-            st.success(f"✅ 提交完成！您的前測得分：**{score} 分**（滿分 100 分）")
+            st.caption("提交後僅會顯示您的「分數」，正確解答將於課程最後的學習卡中一併公布，請放心作答！")
+        else:
+            st.caption("這是與前測相同的題目，看看你的觀念進步了多少！")
+
+        with st.form(f"{phase}_test_form"):
+            selections = {}
+            for i, q in enumerate(questions):
+                st.subheader(f"Q{i + 1}. {q['question']}")
+                choice = st.radio(
+                    "選項", q["options"], index=None,
+                    key=f"{phase}_{q['id']}", label_visibility="collapsed",
+                )
+                selections[q["id"]] = choice
+            submitted = st.form_submit_button("提交答案", width="stretch")
+
+        if submitted:
+            if any(v is None for v in selections.values()):
+                st.error("請完成所有題目後再提交。")
+                return
+            correctness = []
+            for q in questions:
+                selected_index = q["options"].index(selections[q["id"]])
+                is_correct = selected_index == q["correct_index"]
+                correctness.append(is_correct)
+                db.save_test_answer(st.session_state.student_id, phase, q["id"], selected_index, is_correct)
+
+            score = score_from_answers(correctness)
+            st.session_state[answers_key] = selections
+            st.session_state[score_key] = score
+
+            if phase == "post":
+                st.session_state.stage = "report"
+            st.rerun()
+    else:
+        # 已經算過分數了（狀態存在 session_state，重新整理頁面也不會遺失），
+        # 顯示結果，並讓「進入下一階段」的按鈕可以被正確點擊到。
+        score = st.session_state[score_key]
+        st.success(f"✅ 提交完成！您的{'前' if phase == 'pre' else '後'}測得分：**{score} 分**（滿分 100 分）")
+        if phase == "pre":
             if st.button("進入下一階段：章節案例應變 ➜", width="stretch"):
                 st.session_state.stage = "cases"
                 st.rerun()
         else:
-            st.session_state.posttest_score = score
             st.session_state.stage = "report"
             st.rerun()
 
