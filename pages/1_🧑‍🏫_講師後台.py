@@ -92,15 +92,35 @@ def cases_to_df(chapters: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def df_to_cases(df: pd.DataFrame) -> list:
+def quiz_to_df(chapters: list) -> pd.DataFrame:
+    rows = []
+    for ch in chapters:
+        for q in ch.get("quiz", []):
+            opts = (q["options"] + [""] * 4)[:4]
+            rows.append({
+                "chapter_id": ch["chapter_id"], "chapter_title": ch["chapter_title"],
+                "unlock_order": ch["unlock_order"], "quiz_id": q["id"], "question": q["question"],
+                "option_A": opts[0], "option_B": opts[1], "option_C": opts[2], "option_D": opts[3],
+                "correct_index": q["correct_index"], "explanation": q["explanation"],
+            })
+    return pd.DataFrame(rows)
+
+
+def df_to_chapters(cases_df: pd.DataFrame, quiz_df: pd.DataFrame) -> list:
+    """把『案例』表格與『章節觀念題』表格合併回完整的 chapters 巢狀結構。
+    兩份表格各自可以獨立新增/刪除列，即使某章節暫時只有其中一種內容也不會遺失另一種。"""
     chapters = {}
-    for _, row in df.iterrows():
-        cid = int(row["chapter_id"])
+
+    def ensure_chapter(cid, title, order):
         if cid not in chapters:
             chapters[cid] = {
-                "chapter_id": cid, "chapter_title": str(row["chapter_title"]),
-                "unlock_order": int(row["unlock_order"]), "cases": [],
+                "chapter_id": cid, "chapter_title": title, "unlock_order": order,
+                "quiz": [], "cases": [],
             }
+
+    for _, row in cases_df.iterrows():
+        cid = int(row["chapter_id"])
+        ensure_chapter(cid, str(row["chapter_title"]), int(row["unlock_order"]))
         options = [{"key": k, "text": str(row[f"option_{k}"])} for k in ["A", "B", "C", "D"]]
         outcomes = {k: str(row[f"outcome_{k}"]) for k in ["A", "B", "C", "D"]}
         chapters[cid]["cases"].append({
@@ -108,6 +128,16 @@ def df_to_cases(df: pd.DataFrame) -> list:
             "options": options, "correct_option": str(row["correct_option"]),
             "outcome_predictions": outcomes, "correct_advice": str(row["correct_advice"]),
         })
+
+    for _, row in quiz_df.iterrows():
+        cid = int(row["chapter_id"])
+        ensure_chapter(cid, str(row["chapter_title"]), int(row["unlock_order"]))
+        chapters[cid]["quiz"].append({
+            "id": str(row["quiz_id"]), "question": str(row["question"]),
+            "options": [str(row["option_A"]), str(row["option_B"]), str(row["option_C"]), str(row["option_D"])],
+            "correct_index": int(row["correct_index"]), "explanation": str(row["explanation"]),
+        })
+
     return sorted(chapters.values(), key=lambda c: c["unlock_order"])
 
 
@@ -250,12 +280,26 @@ with tab_prepost:
 
 # -------------------------------------------------- 案例題庫
 with tab_cases:
-    st.subheader("📖 章節案例題庫管理")
-    st.caption("每個案例固定 4 個選項（A/B/C/D）。unlock_order 決定章節解鎖順序。")
+    st.subheader("📖 章節內容管理")
+    st.caption("chapter_id / chapter_title / unlock_order 要在下面兩張表格中保持一致，"
+               "才會被合併成同一個章節。unlock_order 決定章節解鎖順序。")
     chapters = dl.get_chapters()
-    df = cases_to_df(chapters)
-    edited = st.data_editor(
-        df, num_rows="dynamic", width="stretch", key="cases_editor",
+
+    st.markdown("#### 💡 章節觀念題（單純選擇題，不需要情境描述）")
+    quiz_df = quiz_to_df(chapters)
+    edited_quiz = st.data_editor(
+        quiz_df, num_rows="dynamic", width="stretch", key="quiz_editor",
+        column_config={
+            "question": st.column_config.TextColumn("question", width="large"),
+            "explanation": st.column_config.TextColumn("explanation", width="large"),
+            "correct_index": st.column_config.NumberColumn("correct_index (0-3)", min_value=0, max_value=3, step=1),
+        },
+    )
+
+    st.markdown("#### 🔥 情境案例（4 個選項 A/B/C/D）")
+    cases_df = cases_to_df(chapters)
+    edited_cases = st.data_editor(
+        cases_df, num_rows="dynamic", width="stretch", key="cases_editor",
         column_config={
             "scenario": st.column_config.TextColumn("scenario", width="large"),
             "correct_advice": st.column_config.TextColumn("correct_advice", width="large"),
@@ -264,9 +308,9 @@ with tab_cases:
     )
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("💾 儲存案例題庫變更", width="stretch"):
+        if st.button("💾 儲存章節內容變更（觀念題＋案例）", width="stretch"):
             try:
-                dl.save_chapters(df_to_cases(edited))
+                dl.save_chapters(df_to_chapters(edited_cases, edited_quiz))
                 st.success("已儲存！")
             except Exception as e:
                 st.error(f"儲存失敗，請檢查表格內容：{e}")
