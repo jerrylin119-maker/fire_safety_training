@@ -308,9 +308,11 @@ def _render_case_item(case):
 
 def _render_reminder_item(item):
     st.markdown(f"#### 📌 {item.get('title', '本節重點提醒')}")
-    points_html = "".join(f"<div style='margin:6px 0;font-size:1.05em'>◆ {p}</div>" for p in item.get("points", []))
+    points_html = "".join(
+        f"<div style='margin:6px 0;font-size:1.05em;color:#1b3a1b'>◆ {p}</div>" for p in item.get("points", [])
+    )
     st.markdown(
-        f"<div style='background:#eef7ee;border-radius:10px;padding:18px 22px;'>{points_html}</div>",
+        f"<div style='background:#eef7ee;border-radius:10px;padding:18px 22px;color:#1b3a1b'>{points_html}</div>",
         unsafe_allow_html=True,
     )
     st.write("")
