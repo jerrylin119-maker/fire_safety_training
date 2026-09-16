@@ -252,6 +252,49 @@ with tab_unlock:
                 st.rerun()
 
     st.divider()
+    st.subheader("📊 各章節作答統計")
+    st.caption("進入下一章節前，可以先看這裡的統計結果，決定要不要多花時間講解某一題。")
+    if st.button("🔄 重新整理統計"):
+        st.rerun()
+    answers_df = db.get_case_answers_df()
+
+    def _option_counts(item_id: str, item_type: str) -> tuple[dict, int]:
+        """回傳 {selected_option: 人數} 與總作答人數；answers_df 為空或缺欄位時安全回傳空結果。"""
+        if answers_df.empty or "case_id" not in answers_df.columns:
+            return {}, 0
+        sub = answers_df[(answers_df["case_id"] == item_id) & (answers_df["item_type"] == item_type)]
+        return sub["selected_option"].value_counts().to_dict(), len(sub)
+
+    def _render_option_bars(options: list, counts: dict, total: int, correct_key):
+        for key, label in options:
+            cnt = int(counts.get(key, 0))
+            pct = (cnt / total) if total else 0
+            mark = " ✅" if key == correct_key else ""
+            st.caption(f"{label}{mark} — {cnt} 人（{pct * 100:.0f}%）")
+            st.progress(pct)
+
+    current_unlock = control.get("unlocked_chapter", 1)
+    for ch in chapters:
+        with st.expander(f"{ch['chapter_title']}", expanded=(ch["unlock_order"] == current_unlock)):
+            has_content = False
+            for q in ch.get("quiz", []):
+                has_content = True
+                counts, total = _option_counts(q["id"], "quiz")
+                st.markdown(f"💡 **{q['question']}**　`{total} 人作答`")
+                options = [(str(i), text) for i, text in enumerate(q["options"])]
+                _render_option_bars(options, counts, total, str(q["correct_index"]))
+                st.write("")
+            for case in ch.get("cases", []):
+                has_content = True
+                counts, total = _option_counts(case["case_id"], "case")
+                st.markdown(f"🔥 **{case['scenario']}**　`{total} 人作答`")
+                options = [(opt["key"], f"{opt['key']}. {opt['text']}") for opt in case["options"]]
+                _render_option_bars(options, counts, total, case["correct_option"])
+                st.write("")
+            if not has_content:
+                st.caption("這個章節目前沒有觀念題或案例。")
+
+    st.divider()
     with st.form("course_settings_form"):
         title = st.text_input("課程標題（顯示於學員端側邊欄）", value=control.get("course_title", ""))
         notice = st.text_area("即時公告（顯示於學員端側邊欄，留空則不顯示）", value=control.get("notice", ""))
