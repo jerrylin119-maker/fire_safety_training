@@ -243,6 +243,9 @@ def _get_unlocked_flat_items():
                 flat.append({**q, "_type": "quiz", "chapter_id": ch["chapter_id"], "chapter_title": ch["chapter_title"]})
             for case in ch["cases"]:
                 flat.append({**case, "_type": "case", "chapter_id": ch["chapter_id"], "chapter_title": ch["chapter_title"]})
+            if ch.get("reminder"):
+                flat.append({**ch["reminder"], "_type": "reminder", "chapter_id": ch["chapter_id"],
+                             "chapter_title": ch["chapter_title"]})
     return flat, unlocked_chapter, max_order
 
 
@@ -303,6 +306,20 @@ def _render_case_item(case):
             st.rerun()
 
 
+def _render_reminder_item(item):
+    st.markdown(f"#### 📌 {item.get('title', '本節重點提醒')}")
+    points_html = "".join(f"<div style='margin:6px 0;font-size:1.05em'>◆ {p}</div>" for p in item.get("points", []))
+    st.markdown(
+        f"<div style='background:#eef7ee;border-radius:10px;padding:18px 22px;'>{points_html}</div>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    if st.button("我了解了，繼續 ➜", width="stretch", key=f"reminder_next_{item['chapter_id']}"):
+        st.session_state.case_ptr += 1
+        persist_progress()
+        st.rerun()
+
+
 def render_cases():
     st.header("📖 動態章節內容")
     flat_items, unlocked_chapter, max_order = _get_unlocked_flat_items()
@@ -328,6 +345,8 @@ def render_cases():
     st.caption(item["chapter_title"])
     if item["_type"] == "quiz":
         _render_quiz_item(item)
+    elif item["_type"] == "reminder":
+        _render_reminder_item(item)
     else:
         _render_case_item(item)
 

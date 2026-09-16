@@ -106,16 +106,29 @@ def quiz_to_df(chapters: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def df_to_chapters(cases_df: pd.DataFrame, quiz_df: pd.DataFrame) -> list:
-    """把『案例』表格與『章節觀念題』表格合併回完整的 chapters 巢狀結構。
-    兩份表格各自可以獨立新增/刪除列，即使某章節暫時只有其中一種內容也不會遺失另一種。"""
+def reminder_to_df(chapters: list) -> pd.DataFrame:
+    rows = []
+    for ch in chapters:
+        rem = ch.get("reminder")
+        if rem:
+            rows.append({
+                "chapter_id": ch["chapter_id"], "chapter_title": ch["chapter_title"],
+                "unlock_order": ch["unlock_order"], "reminder_title": rem.get("title", "本節重點提醒"),
+                "points": "\n".join(rem.get("points", [])),
+            })
+    return pd.DataFrame(rows)
+
+
+def df_to_chapters(cases_df: pd.DataFrame, quiz_df: pd.DataFrame, reminder_df: pd.DataFrame) -> list:
+    """把『案例』『章節觀念題』『章節重點提醒』三張表格合併回完整的 chapters 巢狀結構。
+    各表格可以獨立新增/刪除列，即使某章節暫時只有其中幾種內容也不會遺失其他內容。"""
     chapters = {}
 
     def ensure_chapter(cid, title, order):
         if cid not in chapters:
             chapters[cid] = {
                 "chapter_id": cid, "chapter_title": title, "unlock_order": order,
-                "quiz": [], "cases": [],
+                "quiz": [], "cases": [], "reminder": None,
             }
 
     for _, row in cases_df.iterrows():
@@ -137,6 +150,13 @@ def df_to_chapters(cases_df: pd.DataFrame, quiz_df: pd.DataFrame) -> list:
             "options": [str(row["option_A"]), str(row["option_B"]), str(row["option_C"]), str(row["option_D"])],
             "correct_index": int(row["correct_index"]), "explanation": str(row["explanation"]),
         })
+
+    for _, row in reminder_df.iterrows():
+        cid = int(row["chapter_id"])
+        ensure_chapter(cid, str(row["chapter_title"]), int(row["unlock_order"]))
+        points = [p.strip() for p in str(row["points"]).split("\n") if p.strip()]
+        if points:
+            chapters[cid]["reminder"] = {"title": str(row["reminder_title"]) or "本節重點提醒", "points": points}
 
     return sorted(chapters.values(), key=lambda c: c["unlock_order"])
 
@@ -281,9 +301,19 @@ with tab_prepost:
 # -------------------------------------------------- 案例題庫
 with tab_cases:
     st.subheader("📖 章節內容管理")
-    st.caption("chapter_id / chapter_title / unlock_order 要在下面兩張表格中保持一致，"
+    st.caption("chapter_id / chapter_title / unlock_order 要在下面三張表格中保持一致，"
                "才會被合併成同一個章節。unlock_order 決定章節解鎖順序。")
     chapters = dl.get_chapters()
+
+    st.markdown("#### 📌 章節重點提醒（學員答完該章節所有題目後顯示的總結卡）")
+    st.caption("points 欄位可以打好幾行，一行一個重點，畫面上會自動加上 ◆ 符號條列顯示。")
+    reminder_df = reminder_to_df(chapters)
+    edited_reminder = st.data_editor(
+        reminder_df, num_rows="dynamic", width="stretch", key="reminder_editor",
+        column_config={
+            "points": st.column_config.TextColumn("points（一行一點）", width="large"),
+        },
+    )
 
     st.markdown("#### 💡 章節觀念題（單純選擇題，不需要情境描述）")
     quiz_df = quiz_to_df(chapters)
@@ -308,9 +338,9 @@ with tab_cases:
     )
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("💾 儲存章節內容變更（觀念題＋案例）", width="stretch"):
+        if st.button("💾 儲存章節內容變更（重點提醒＋觀念題＋案例）", width="stretch"):
             try:
-                dl.save_chapters(df_to_chapters(edited_cases, edited_quiz))
+                dl.save_chapters(df_to_chapters(edited_cases, edited_quiz, edited_reminder))
                 st.success("已儲存！")
             except Exception as e:
                 st.error(f"儲存失敗，請檢查表格內容：{e}")
