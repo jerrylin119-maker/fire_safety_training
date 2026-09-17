@@ -415,14 +415,30 @@ def render_simulation():
     elif node["type"] == "checklist":
         tasks = node["tasks"]
         idx = st.session_state.sim_task_idx
+        answers_key = f"sim_checklist_answers_{node_id}"
+        if answers_key not in st.session_state:
+            st.session_state[answers_key] = {}
 
         if idx >= len(tasks):
-            st.success("✅ 這個階段的任務已全部完成！")
+            # 4 項任務都選完了，這時候才一次揭曉每一項的對錯與說明，再給整體建議。
+            st.success("✅ 這個階段的任務已全部完成！以下是逐項結果：")
+            answers = st.session_state[answers_key]
+            for i, task in enumerate(tasks):
+                opt = answers.get(task["id"])
+                st.markdown(f"**{task['prompt']}**")
+                if opt:
+                    st.markdown(f"你的選擇：{opt['key']}. {opt['text']}")
+                    (st.success if opt["correct"] else st.error)(
+                        ("✅ " if opt["correct"] else "❌ ") + opt["feedback"]
+                    )
+                if i < len(tasks) - 1:
+                    st.write("")
             if node.get("group_advice"):
                 st.info(node["group_advice"])
             if st.button("前往下一階段 ➜", width="stretch"):
                 st.session_state.sim_node = node["next"]
                 st.session_state.sim_task_idx = 0
+                del st.session_state[answers_key]
                 if node["next"] in sim.get("endings", {}):
                     st.session_state.sim_ending = node["next"]
                 persist_progress()
@@ -433,21 +449,13 @@ def render_simulation():
         task = tasks[idx]
         st.markdown(f"**{task['prompt']}**")
 
-        answered_key = f"sim_task_{node_id}_{task['id']}"
-        if answered_key not in st.session_state:
-            for opt in task["options"]:
-                if st.button(f"{opt['key']}. {opt['text']}",
-                             key=f"sim_task_opt_{node_id}_{task['id']}_{opt['key']}",
-                             width="stretch"):
-                    db.save_sim_log(st.session_state.student_id, node_id, task["id"], opt["key"], opt["correct"])
-                    st.session_state[answered_key] = opt
-                    st.rerun()
-        else:
-            opt = st.session_state[answered_key]
-            (st.success if opt["correct"] else st.error)(("✅ " if opt["correct"] else "❌ ") + opt["feedback"])
-            if st.button("下一步 ➜", width="stretch"):
+        for opt in task["options"]:
+            if st.button(f"{opt['key']}. {opt['text']}",
+                         key=f"sim_task_opt_{node_id}_{task['id']}_{opt['key']}",
+                         width="stretch"):
+                db.save_sim_log(st.session_state.student_id, node_id, task["id"], opt["key"], opt["correct"])
+                st.session_state[answers_key][task["id"]] = opt
                 st.session_state.sim_task_idx += 1
-                del st.session_state[answered_key]
                 persist_progress()
                 st.rerun()
 
