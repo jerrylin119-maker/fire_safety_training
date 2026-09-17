@@ -367,7 +367,16 @@ def render_simulation():
         ending = sim["endings"][node_id]
         box = st.success if node_id == "end_good" else st.warning
         st.markdown(f"## {ending['title']}")
-        box(ending["message"])
+        if "tiers" in ending:
+            # 依這位學員闖關至今的正確率，挑選最貼近的一段結局建議文字
+            acc = db.get_sim_accuracy(st.session_state.student_id)
+            pct = acc["pct"] if acc["pct"] is not None else 0
+            st.caption(f"闖關正確率：{pct:.0f}%（{acc['correct']}/{acc['total']} 個決策點）")
+            tiers = sorted(ending["tiers"], key=lambda t: t["min_accuracy"], reverse=True)
+            message = next((t["message"] for t in tiers if pct >= t["min_accuracy"]), tiers[-1]["message"])
+            box(message)
+        else:
+            box(ending["message"])
         if st.button("前往下一階段：觀念後測 ➜", width="stretch"):
             st.session_state.stage = "posttest"
             persist_progress()
@@ -409,6 +418,8 @@ def render_simulation():
 
         if idx >= len(tasks):
             st.success("✅ 這個階段的任務已全部完成！")
+            if node.get("group_advice"):
+                st.info(node["group_advice"])
             if st.button("前往下一階段 ➜", width="stretch"):
                 st.session_state.sim_node = node["next"]
                 st.session_state.sim_task_idx = 0
