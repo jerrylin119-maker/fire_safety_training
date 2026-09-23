@@ -19,6 +19,7 @@ from utils import db
 from utils.helpers import score_from_answers
 
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Regular.ttf"
+FONT_BOLD_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Bold.ttf"
 
 
 def get_or_init_current_class() -> str:
@@ -503,17 +504,18 @@ def build_report_pdf() -> bytes:
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.add_font("NotoTC", "", str(FONT_PATH))
+    pdf.add_font("NotoTC", "B", str(FONT_BOLD_PATH))
 
-    def title(text, size=16, color=(30, 30, 30), gap_before=0, gap_after=4):
+    def title(text, size=16, color=(15, 15, 15), gap_before=0, gap_after=4):
         if gap_before:
             pdf.ln(gap_before)
-        pdf.set_font("NotoTC", size=size)
+        pdf.set_font("NotoTC", style="B", size=size)
         pdf.set_text_color(*color)
         pdf.multi_cell(0, size * 0.6, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(gap_after)
 
-    def body(text, size=11, color=(45, 45, 45)):
-        pdf.set_font("NotoTC", size=size)
+    def body(text, size=11, color=(35, 35, 35), bold=False):
+        pdf.set_font("NotoTC", style="B" if bold else "", size=size)
         pdf.set_text_color(*color)
         pdf.multi_cell(0, size * 0.62, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
@@ -544,9 +546,9 @@ def build_report_pdf() -> bytes:
         is_correct = selected == correct
         mark = "正確" if is_correct else "錯誤"
         mark_color = (20, 120, 20) if is_correct else (180, 30, 30)
-        body(f"Q{i + 1}. {q['question']}", size=11, color=(20, 20, 20))
-        body(f"你的答案：{selected}（{mark}）　正確答案：{correct}", size=10, color=mark_color)
-        body(q["explanation"], size=9, color=(75, 75, 75))
+        body(f"Q{i + 1}. {q['question']}", size=11, color=(15, 15, 15), bold=True)
+        body(f"你的答案：{selected}（{mark}）　正確答案：{correct}", size=10, color=mark_color, bold=True)
+        body(q["explanation"], size=9, color=(70, 70, 70))
         pdf.ln(2)
 
     title(f"{st.session_state.student_venue}　專屬課後提醒卡", size=13, gap_before=4)
