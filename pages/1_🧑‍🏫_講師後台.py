@@ -6,7 +6,9 @@
 - 題庫動態管理：st.data_editor 線上編輯，或直接上傳 JSON 檔案整份置換
 - 章節解鎖控制：控制全班學員手機端可看到的章節進度
 """
+import io
 import json
+import zipfile
 from datetime import datetime
 
 import altair as alt
@@ -161,15 +163,81 @@ def df_to_chapters(cases_df: pd.DataFrame, quiz_df: pd.DataFrame, reminder_df: p
     return sorted(chapters.values(), key=lambda c: c["unlock_order"])
 
 
+# ==================== 班別打包工具 ====================
+def _build_class_summary_md(class_id: str) -> str:
+    students_df = db.get_students_df(class_id)
+    scores_df = db.get_test_scores_df(class_id)
+    case_df = db.get_case_answers_df(class_id)
+    sim_df = db.get_sim_log_df(class_id)
+
+    lines = [f"# 班別打包報告：{class_id}", "", f"匯出時間：{datetime.now():%Y-%m-%d %H:%M:%S}", ""]
+    lines.append(f"## 簽到人數：{len(students_df)} 人")
+    if not students_df.empty:
+        lines.append("")
+        lines.append("### 場所類別分布")
+        for venue, cnt in students_df["venue"].value_counts().items():
+            lines.append(f"- {venue}：{cnt} 人")
+
+    lines.append("")
+    lines.append("## 前後測成績")
+    if scores_df.empty:
+        lines.append("（尚無前後測作答紀錄）")
+    else:
+        pivot = scores_df.pivot_table(index="student_id", columns="phase", values="score")
+        pre_avg = pivot["pre"].mean() if "pre" in pivot.columns else None
+        post_avg = pivot["post"].mean() if "post" in pivot.columns else None
+        lines.append(f"- 前測平均：{pre_avg:.1f} 分" if pre_avg is not None else "- 前測平均：無資料")
+        lines.append(f"- 後測平均：{post_avg:.1f} 分" if post_avg is not None else "- 後測平均：無資料")
+        if pre_avg is not None and post_avg is not None:
+            lines.append(f"- 平均進步：{post_avg - pre_avg:+.1f} 分")
+
+    lines.append("")
+    lines.append("## 章節內容（觀念題＋案例）整體正確率")
+    if case_df.empty:
+        lines.append("（尚無作答紀錄）")
+    else:
+        lines.append(f"- 共 {len(case_df)} 題作答，整體正確率 {case_df['is_correct'].mean() * 100:.1f}%")
+
+    lines.append("")
+    lines.append("## 闖關模擬整體正確率")
+    if sim_df.empty:
+        lines.append("（尚無闖關紀錄）")
+    else:
+        lines.append(f"- 共 {len(sim_df)} 個決策點，整體正確率 {sim_df['is_correct'].mean() * 100:.1f}%")
+
+    return "\n".join(lines)
+
+
+def build_class_package(class_id: str) -> bytes:
+    """把某個班別的完整資料打包成一個 ZIP（含摘要報告 + 4 份原始資料 CSV）。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("summary.md", _build_class_summary_md(class_id))
+        zf.writestr("roster.csv", db.get_students_df(class_id).to_csv(index=False))
+        zf.writestr("test_scores.csv", db.get_test_scores_df(class_id).to_csv(index=False))
+        zf.writestr("case_answers.csv", db.get_case_answers_df(class_id).to_csv(index=False))
+        zf.writestr("sim_log.csv", db.get_sim_log_df(class_id).to_csv(index=False))
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ==================== 分頁 ====================
-tab_dash, tab_unlock, tab_prepost, tab_cases, tab_sim, tab_sys = st.tabs(
-    ["📊 即時儀表板", "🔓 章節解鎖控制", "📝 前後測題庫", "📖 案例題庫", "🧯 闖關劇本", "⚙️ 系統設定"]
+tab_dash, tab_class, tab_unlock, tab_prepost, tab_cases, tab_sim, tab_sys = st.tabs(
+    ["📊 即時儀表板", "🗂️ 班別管理", "🔓 章節解鎖控制", "📝 前後測題庫", "📖 案例題庫", "🧯 闖關劇本", "⚙️ 系統設定"]
 )
 
 # -------------------------------------------------- 儀表板
 with tab_dash:
+    _control = dl.get_control_state()
+    _class_options_df = db.get_class_list()
+    _class_options = ["（全部班別）"] + list(_class_options_df["class_id"]) if not _class_options_df.empty else ["（全部班別）"]
+    _default_label = _control.get("current_class") or "（全部班別）"
+    _default_idx = _class_options.index(_default_label) if _default_label in _class_options else 0
+    selected_class_label = st.selectbox("篩選班別", _class_options, index=_default_idx)
+    selected_class = None if selected_class_label == "（全部班別）" else selected_class_label
+
     st.subheader("📋 簽到名冊")
-    students_df = db.get_students_df()
+    students_df = db.get_students_df(selected_class)
     if students_df.empty:
         st.info("目前尚無學員簽到。")
     else:
@@ -189,7 +257,7 @@ with tab_dash:
 
         with c2:
             st.subheader("📈 前後測分數比較")
-            scores_df = db.get_test_scores_df()
+            scores_df = db.get_test_scores_df(selected_class)
             if scores_df.empty:
                 st.info("目前尚無前後測作答紀錄。")
             else:
@@ -213,24 +281,93 @@ with tab_dash:
                 st.altair_chart(bar, width="stretch")
 
         st.divider()
-        st.subheader("⬇️ 資料匯出")
+        st.subheader("⬇️ 資料匯出（依目前篩選的班別）")
         colA, colB, colC = st.columns(3)
         with colA:
             st.download_button("匯出簽到名冊 CSV", students_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"roster_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
                                 width="stretch")
         with colB:
-            case_df = db.get_case_answers_df()
+            case_df = db.get_case_answers_df(selected_class)
             st.download_button("匯出案例作答 CSV", case_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"case_answers_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
                                 width="stretch", disabled=case_df.empty)
         with colC:
-            sim_df = db.get_sim_log_df()
+            sim_df = db.get_sim_log_df(selected_class)
             st.download_button("匯出闖關紀錄 CSV", sim_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"sim_log_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
                                 width="stretch", disabled=sim_df.empty)
 
     if st.button("🔄 重新整理儀表板"):
+        st.rerun()
+
+# -------------------------------------------------- 班別管理
+with tab_class:
+    st.subheader("🗂️ 班別管理")
+    st.caption("每次開課前，先在這裡設定／確認班別名稱，之後所有新簽到的學員都會自動歸屬這個班別。"
+               "下課後可以打包下載這個班別的完整資料，再清空資料庫、準備開下一班。")
+
+    control = dl.get_control_state()
+    current_class = control.get("current_class")
+    st.metric("目前班別", current_class or "尚未設定")
+    if not current_class:
+        st.caption("尚未設定時，第一位學員簽到會自動用今天日期建立一個班別。")
+
+    with st.form("class_form"):
+        new_class = st.text_input(
+            "設定／更改「目前班別」名稱（建議用日期，或日期＋場次，例如 2026-09-23 或 2026-09-23-上午班）",
+            value=current_class or datetime.now().strftime("%Y-%m-%d"),
+        )
+        if st.form_submit_button("設定為目前班別", width="stretch"):
+            new_class = new_class.strip()
+            if not new_class:
+                st.error("班別名稱不能是空白。")
+            else:
+                control["current_class"] = new_class
+                dl.save_control_state(control)
+                st.success(f"已將目前班別設定為「{new_class}」，之後新簽到的學員都會歸屬這個班別。")
+                st.rerun()
+
+    st.divider()
+    st.subheader("📋 資料庫中的班別列表")
+    class_list_df = db.get_class_list()
+    if class_list_df.empty:
+        st.info("目前資料庫裡還沒有任何學員資料。")
+    else:
+        st.dataframe(class_list_df, width="stretch", hide_index=True)
+
+    st.divider()
+    st.subheader("📦 打包並下載「目前班別」的完整資料")
+    if not current_class:
+        st.info("尚未設定目前班別，無法打包。")
+    else:
+        pkg_students_df = db.get_students_df(current_class)
+        st.caption(f"將打包「{current_class}」，共 {len(pkg_students_df)} 位學員的資料"
+                   "（簽到名冊、前後測成績、章節作答、闖關紀錄、摘要報告）。")
+        if st.button("📦 產生打包檔", width="stretch", disabled=pkg_students_df.empty):
+            st.session_state["_class_pkg_bytes"] = build_class_package(current_class)
+            st.session_state["_class_pkg_name"] = current_class
+        if (st.session_state.get("_class_pkg_bytes") is not None
+                and st.session_state.get("_class_pkg_name") == current_class):
+            st.download_button(
+                "⬇️ 下載打包檔（ZIP）",
+                st.session_state["_class_pkg_bytes"],
+                file_name=f"class_{current_class}_{datetime.now():%Y%m%d_%H%M}.zip",
+                mime="application/zip",
+                width="stretch",
+            )
+
+    st.divider()
+    st.subheader("🗑️ 課程結束：清空所有資料，準備下一班")
+    st.warning("此操作會清空**所有班別**的簽到名冊與作答紀錄，且無法復原！請先確認已經打包下載過需要保存的資料。")
+    confirm = st.checkbox("我已經打包下載需要的資料，確定要清空所有資料、準備開始下一班")
+    if st.button("清空所有資料，準備下一班", disabled=not confirm, type="primary", width="stretch"):
+        db.reset_all_data()
+        control["current_class"] = ""
+        dl.save_control_state(control)
+        st.session_state.pop("_class_pkg_bytes", None)
+        st.session_state.pop("_class_pkg_name", None)
+        st.success("已清空所有資料。下一位學員簽到時，會自動用當天日期建立新的班別。")
         st.rerun()
 
 # -------------------------------------------------- 章節解鎖控制
@@ -455,10 +592,6 @@ with tab_sys:
                "本頁面不提供線上修改密碼功能，以避免密碼外洩風險。")
 
     st.divider()
-    st.subheader("🗑️ 危險區：清空所有作答資料")
-    st.warning("此操作會清空所有簽到名冊與作答紀錄，且無法復原！僅建議於課程結束後或測試時使用。")
-    confirm = st.checkbox("我了解此操作無法復原，確定要清空所有資料")
-    if st.button("清空所有資料", disabled=not confirm, type="primary"):
-        db.reset_all_data()
-        st.success("已清空所有資料。")
-        st.rerun()
+    st.subheader("🗑️ 清空所有資料")
+    st.caption("這個功能已經搬到「🗂️ 班別管理」分頁，跟班別打包下載放在一起，"
+               "課程結束後可以在那裡先打包匯出、再清空資料，準備下一班。")

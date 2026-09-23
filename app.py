@@ -10,10 +10,24 @@
     只要重新整理同一個網址，或回到簽到頁輸入代碼，就能接續先前的作答進度，
     不會因為斷線、關閉分頁而全部重來。
 """
+from datetime import datetime
+
 import streamlit as st
 from utils import data_loader as dl
 from utils import db
 from utils.helpers import score_from_answers
+
+
+def get_or_init_current_class() -> str:
+    """取得目前講師設定的班別代碼；若講師還沒設定過，自動用今天日期建立一個，
+    並存回 control_state.json，讓同一天的學員都歸屬同一班別。"""
+    control = dl.get_control_state()
+    class_id = control.get("current_class")
+    if not class_id:
+        class_id = datetime.now().strftime("%Y-%m-%d")
+        control["current_class"] = class_id
+        dl.save_control_state(control)
+    return class_id
 
 st.set_page_config(page_title="防火管理訓練互動教學系統", page_icon="🔥", layout="centered")
 db.init_db()
@@ -111,6 +125,8 @@ def sidebar_progress():
     control = dl.get_control_state()
     with st.sidebar:
         st.title(f"🔥 {control.get('course_title', '防火管理訓練互動教學')}")
+        if control.get("current_class"):
+            st.caption(f"📚 班別：{control['current_class']}")
         if control.get("notice"):
             st.info(control["notice"])
         st.divider()
@@ -144,7 +160,8 @@ def render_onboarding():
         if not name.strip():
             st.error("請輸入姓名。")
             return
-        student_id = db.add_student(name.strip(), venue, position.strip())
+        class_id = get_or_init_current_class()
+        student_id = db.add_student(name.strip(), venue, position.strip(), class_id)
         st.session_state.update(
             student_id=student_id,
             student_name=name.strip(),

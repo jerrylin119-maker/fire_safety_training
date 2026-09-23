@@ -81,7 +81,7 @@ def save_simulation(data: dict) -> None:
 # ---------- 全班共用的控制狀態（章節解鎖等） ----------
 def get_control_state() -> dict:
     if not CONTROL_FILE.exists():
-        default = {"unlocked_chapter": 1, "course_title": "防火管理訓練互動教學", "notice": ""}
+        default = {"unlocked_chapter": 1, "course_title": "防火管理訓練互動教學", "notice": "", "current_class": ""}
         _save(CONTROL_FILE, default)
         return default
     return _load(CONTROL_FILE)

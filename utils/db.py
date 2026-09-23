@@ -8,6 +8,10 @@ SQLite 檔案，讓「講台上的講師後台」與「學員手機端」讀寫�
 `progress` 表額外保存每位學員「目前進度到哪裡」的完整快照，讓學員中途斷線、
 關閉分頁、或切換裝置時，可以憑「簽到代碼」（其實就是 student_id）接續作答，
 不必從頭重來一次。
+
+`students.class_id` 用來區分「班別」（每次開課一個班別，預設用日期命名）。
+每位學員簽到當下，會被標記為目前講師在後台設定的「目前班別」，讓講師可以
+針對單一班別查看儀表板、打包匯出、或課後清空重來。
 """
 import json
 import sqlite3
@@ -39,7 +43,8 @@ def init_db():
             name TEXT NOT NULL,
             venue TEXT NOT NULL,
             position TEXT,
-            created_at TEXT
+            created_at TEXT,
+            class_id TEXT
         )
     """)
     cur.execute("""
@@ -91,8 +96,9 @@ def init_db():
             updated_at TEXT
         )
     """)
-    # 相容舊資料庫：如果是舊版本建立的 case_answers 表（沒有 item_type 欄位），補上。
+    # 相容舊資料庫：補上後來才新增的欄位。
     _ensure_column(conn, "case_answers", "item_type", "TEXT DEFAULT 'case'")
+    _ensure_column(conn, "students", "class_id", "TEXT")
     conn.commit()
     conn.close()
 
@@ -102,12 +108,12 @@ def _now() -> str:
 
 
 # ---------- 寫入 ----------
-def add_student(name: str, venue: str, position: str) -> int:
+def add_student(name: str, venue: str, position: str, class_id: str = "") -> int:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO students (name, venue, position, created_at) VALUES (?, ?, ?, ?)",
-        (name, venue, position, _now()),
+        "INSERT INTO students (name, venue, position, created_at, class_id) VALUES (?, ?, ?, ?, ?)",
+        (name, venue, position, _now(), class_id),
     )
     conn.commit()
     student_id = cur.lastrowid
@@ -219,25 +225,51 @@ def load_progress(student_id) -> dict | None:
     }
 
 
-# ---------- 查詢（給講師後台儀表板使用） ----------
-def get_students_df() -> pd.DataFrame:
+# ---------- 查詢（給講師後台儀表板使用；class_id=None 代表不篩選、查全部） ----------
+def get_class_list() -> pd.DataFrame:
+    """列出資料庫裡目前有哪些班別、各自的人數與簽到時間範圍（新到舊排序）。"""
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM students ORDER BY created_at DESC", conn)
+    df = pd.read_sql_query("""
+        SELECT COALESCE(NULLIF(class_id, ''), '（未分班）') AS class_id,
+               COUNT(*) AS student_count,
+               MIN(created_at) AS first_signup,
+               MAX(created_at) AS last_signup
+        FROM students
+        GROUP BY class_id
+        ORDER BY last_signup DESC
+    """, conn)
     conn.close()
     return df
 
 
-def get_test_scores_df() -> pd.DataFrame:
+def get_students_df(class_id: str | None = None) -> pd.DataFrame:
+    conn = get_conn()
+    if class_id:
+        df = pd.read_sql_query(
+            "SELECT * FROM students WHERE class_id = ? ORDER BY created_at DESC", conn, params=(class_id,)
+        )
+    else:
+        df = pd.read_sql_query("SELECT * FROM students ORDER BY created_at DESC", conn)
+    conn.close()
+    return df
+
+
+def get_test_scores_df(class_id: str | None = None) -> pd.DataFrame:
     """每位學員的前測/後測得分（答對題數 / 總題數 * 100）。"""
     conn = get_conn()
-    df = pd.read_sql_query("""
+    sql = """
         SELECT s.id AS student_id, s.name, s.venue, s.position,
                ta.phase, SUM(ta.is_correct) AS correct_count,
                COUNT(ta.id) AS total_count
         FROM students s
         JOIN test_answers ta ON ta.student_id = s.id
+        {where}
         GROUP BY s.id, ta.phase
-    """, conn)
+    """
+    if class_id:
+        df = pd.read_sql_query(sql.format(where="WHERE s.class_id = ?"), conn, params=(class_id,))
+    else:
+        df = pd.read_sql_query(sql.format(where=""), conn)
     conn.close()
     if df.empty:
         return df
@@ -245,14 +277,36 @@ def get_test_scores_df() -> pd.DataFrame:
     return df
 
 
-def get_case_answers_df() -> pd.DataFrame:
+def get_case_answers_df(class_id: str | None = None) -> pd.DataFrame:
     conn = get_conn()
-    df = pd.read_sql_query("""
+    sql = """
         SELECT ca.*, s.name, s.venue
         FROM case_answers ca
         JOIN students s ON s.id = ca.student_id
+        {where}
         ORDER BY ca.created_at DESC
-    """, conn)
+    """
+    if class_id:
+        df = pd.read_sql_query(sql.format(where="WHERE s.class_id = ?"), conn, params=(class_id,))
+    else:
+        df = pd.read_sql_query(sql.format(where=""), conn)
+    conn.close()
+    return df
+
+
+def get_sim_log_df(class_id: str | None = None) -> pd.DataFrame:
+    conn = get_conn()
+    sql = """
+        SELECT sl.*, s.name, s.venue
+        FROM sim_log sl
+        JOIN students s ON s.id = sl.student_id
+        {where}
+        ORDER BY sl.created_at DESC
+    """
+    if class_id:
+        df = pd.read_sql_query(sql.format(where="WHERE s.class_id = ?"), conn, params=(class_id,))
+    else:
+        df = pd.read_sql_query(sql.format(where=""), conn)
     conn.close()
     return df
 
@@ -281,20 +335,8 @@ def get_sim_accuracy(student_id: int) -> dict:
     return {"correct": correct, "total": total, "pct": round(correct / total * 100, 1) if total else None}
 
 
-def get_sim_log_df() -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query("""
-        SELECT sl.*, s.name, s.venue
-        FROM sim_log sl
-        JOIN students s ON s.id = sl.student_id
-        ORDER BY sl.created_at DESC
-    """, conn)
-    conn.close()
-    return df
-
-
 def reset_all_data():
-    """危險操作：清空所有作答紀錄與簽到名冊（僅供講師課後或測試時使用）。"""
+    """危險操作：清空所有作答紀錄與簽到名冊（課後打包完畢、準備開下一班時使用）。"""
     conn = get_conn()
     for table in ["students", "test_answers", "case_answers", "sim_log", "progress"]:
         conn.execute(f"DELETE FROM {table}")
