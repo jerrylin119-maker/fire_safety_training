@@ -11,11 +11,14 @@
     不會因為斷線、關閉分頁而全部重來。
 """
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 from utils import data_loader as dl
 from utils import db
 from utils.helpers import score_from_answers
+
+FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Regular.ttf"
 
 
 def get_or_init_current_class() -> str:
@@ -480,6 +483,84 @@ def render_simulation():
                 st.rerun()
 
 
+def build_report_pdf() -> bytes:
+    """把課後學習卡的內容排成一份 PDF（內嵌中文字型），回傳檔案的 bytes。
+    PDF 內文一律不使用 emoji／符號，只用中文與基本標點，避免字型缺字造成錯誤。"""
+    from fpdf import FPDF, XPos, YPos
+
+    pre = st.session_state.pretest_score or 0
+    post = st.session_state.posttest_score or 0
+    content_acc = db.get_content_accuracy(st.session_state.student_id)
+    sim_acc = db.get_sim_accuracy(st.session_state.student_id)
+    components = [v for v in [post, content_acc["pct"], sim_acc["pct"]] if v is not None]
+    total_score = round(sum(components) / len(components), 1) if components else 0
+    improve = "—" if pre == 0 else f"{round((post - pre) / pre * 100, 1)}%"
+    ending_label = {"end_good": "圓滿完成應變", "end_bad_abandon": "應變中斷"}.get(
+        st.session_state.sim_ending, "尚未完成"
+    )
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.add_font("NotoTC", "", str(FONT_PATH))
+
+    def title(text, size=16, color=(30, 30, 30), gap_before=0, gap_after=4):
+        if gap_before:
+            pdf.ln(gap_before)
+        pdf.set_font("NotoTC", size=size)
+        pdf.set_text_color(*color)
+        pdf.multi_cell(0, size * 0.6, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(gap_after)
+
+    def body(text, size=11, color=(60, 60, 60)):
+        pdf.set_font("NotoTC", size=size)
+        pdf.set_text_color(*color)
+        pdf.multi_cell(0, size * 0.62, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    title("防火管理訓練 課後學習卡", size=18, gap_after=2)
+    body(
+        f"{st.session_state.student_name}　{st.session_state.student_venue}　"
+        f"班別：{st.session_state.student_class}　日期：{datetime.now():%Y-%m-%d}",
+        size=10, color=(110, 110, 110),
+    )
+
+    title("前後測分數對比", size=13, gap_before=6)
+    body(f"前測分數：{pre} 分　後測分數：{post} 分　進步幅度：{improve}")
+
+    title("課程參與表現", size=13, gap_before=6)
+    content_line = f"{content_acc['pct']}%" if content_acc["pct"] is not None else "未作答"
+    sim_line = f"{sim_acc['pct']}%" if sim_acc["pct"] is not None else "未作答"
+    body(
+        f"章節內容正確率：{content_line}\n闖關應變正確率：{sim_line}\n"
+        f"闖關結局：{ending_label}\n綜合總分：{total_score} 分"
+    )
+
+    title("迷思題解答回顧", size=13, gap_before=6)
+    questions = dl.get_prepost_questions()
+    post_answers = st.session_state.posttest_answers
+    for i, q in enumerate(questions):
+        selected = post_answers.get(q["id"], "（未作答）")
+        correct = q["options"][q["correct_index"]]
+        mark = "正確" if selected == correct else "錯誤"
+        body(f"Q{i + 1}. {q['question']}", size=11, color=(30, 30, 30))
+        body(f"你的答案：{selected}（{mark}）　正確答案：{correct}", size=10, color=(90, 90, 90))
+        body(q["explanation"], size=9, color=(130, 130, 130))
+        pdf.ln(2)
+
+    title(f"{st.session_state.student_venue}　專屬課後提醒卡", size=13, gap_before=4)
+    advice = dl.get_venue_advice().get(st.session_state.student_venue, {})
+    if advice.get("reminder"):
+        body(advice["reminder"])
+        pdf.ln(1)
+    for item in advice.get("checklist", []):
+        body(f"．{item}", size=10)
+
+    title(f"恭喜 {st.session_state.student_name}，完成本次防火管理訓練課程！",
+          size=12, color=(20, 120, 20), gap_before=6, gap_after=0)
+
+    return bytes(pdf.output())
+
+
 # ==================== ⑥ 學習卡與總結 ====================
 def render_report():
     # 只在「列印 / 存成PDF」時生效的樣式：隱藏側邊欄、工具列、按鈕，
@@ -507,13 +588,24 @@ def render_report():
         f"日期：{datetime.now():%Y-%m-%d}"
     )
 
-    with st.expander("📱 想保留這張學習卡？點我看怎麼存到手機（存成 PDF 或截圖都可以）"):
+    st.markdown("#### 📥 保留這張學習卡")
+    if "report_pdf_bytes" not in st.session_state:
+        with st.spinner("正在產生 PDF…"):
+            st.session_state.report_pdf_bytes = build_report_pdf()
+    st.download_button(
+        "📄 下載我的學習卡（PDF）",
+        st.session_state.report_pdf_bytes,
+        file_name=f"學習卡_{st.session_state.student_name}_{datetime.now():%Y%m%d}.pdf",
+        mime="application/pdf",
+        width="stretch",
+    )
+    with st.expander("下載按鈕跑不出來，或想直接截圖？點我看其他方法"):
         st.markdown(
-            "**方法一：存成 PDF（推薦，畫面完整、乾淨）**\n"
+            "**用手機瀏覽器列印成 PDF**\n"
             "- **iPhone / Safari**：點畫面下方的「分享」圖示 ➜ 選「列印」➜ 預覽畫面用兩指「放大」一下 ➜ "
             "左上角再點一次「分享」圖示 ➜ 選「儲存至檔案」或直接傳送給自己\n"
             "- **Android / Chrome**：點右上角「⋮」選單 ➜ 「分享」➜「列印」➜ 目的地選「另存為 PDF」➜ 儲存\n\n"
-            "**方法二：直接截圖**\n"
+            "**直接截圖**\n"
             "- 這頁內容比較長，建議捲動頁面分段截圖（例如分數對比一張、迷思題解答一張、場所提醒卡一張），"
             "存到手機相簿即可。"
         )
