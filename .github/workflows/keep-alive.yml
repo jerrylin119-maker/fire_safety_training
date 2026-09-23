@@ -1,0 +1,29 @@
+name: Keep Streamlit App Awake
+
+# Streamlit Community Cloud 的免費方案，App 太久沒有人瀏覽就會自動休眠，
+# 下次有人打開時要等它重新啟動。這個排程會定期自動「造訪」App 一次，
+# 讓它一直保持在有人使用的狀態，不會進入休眠。
+
+on:
+  schedule:
+    # 每 3 天造訪一次（UTC 04:00，約台灣時間中午 12:00），
+    # 在 Streamlit Cloud 判定「太久沒人用」之前就先造訪，避免休眠。
+    - cron: "0 4 */3 * *"
+  workflow_dispatch: {}  # 也可以到 GitHub 的 Actions 頁面手動點擊執行，測試用
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the Streamlit app to keep it awake
+        run: |
+          echo "造訪 App..."
+          status=$(curl -s -o /dev/null -w "%{http_code}" -L --max-time 30 \
+            -A "Mozilla/5.0 (keep-alive-bot)" \
+            "https://firesafetytraining-ttfd.streamlit.app/")
+          echo "回應狀態碼：$status"
+          if [ "$status" -ge 400 ]; then
+            echo "⚠️ 網站回應異常，狀態碼 $status，請手動確認 App 是否正常運作。"
+            exit 1
+          fi
+          echo "✅ 造訪成功，App 應該不會進入休眠。"
