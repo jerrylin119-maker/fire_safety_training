@@ -129,12 +129,12 @@ def get_student(student_id) -> dict | None:
         return None
     conn = get_conn()
     row = conn.execute(
-        "SELECT id, name, venue, position FROM students WHERE id = ?", (student_id,)
+        "SELECT id, name, venue, position, class_id FROM students WHERE id = ?", (student_id,)
     ).fetchone()
     conn.close()
     if row is None:
         return None
-    return {"id": row[0], "name": row[1], "venue": row[2], "position": row[3]}
+    return {"id": row[0], "name": row[1], "venue": row[2], "position": row[3], "class_id": row[4] or ""}
 
 
 def save_test_answer(student_id: int, phase: str, question_id: str, selected_index: int, is_correct: bool):

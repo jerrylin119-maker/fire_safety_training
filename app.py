@@ -39,6 +39,7 @@ DEFAULTS = {
     "student_name": "",
     "student_venue": "",
     "student_position": "",
+    "student_class": "",
     "pretest_answers": {},
     "pretest_score": None,
     "posttest_answers": {},
@@ -65,6 +66,7 @@ def _restore_from_student_id(student_id) -> bool:
         student_name=student["name"],
         student_venue=student["venue"],
         student_position=student["position"],
+        student_class=student.get("class_id", ""),
         stage=progress.get("stage") or "pretest",
         case_ptr=progress.get("case_ptr", 0),
         sim_node=progress.get("sim_node"),
@@ -167,6 +169,7 @@ def render_onboarding():
             student_name=name.strip(),
             student_venue=venue,
             student_position=position.strip(),
+            student_class=class_id,
             stage="pretest",
         )
         try:
@@ -479,7 +482,41 @@ def render_simulation():
 
 # ==================== ⑥ 學習卡與總結 ====================
 def render_report():
+    # 只在「列印 / 存成PDF」時生效的樣式：隱藏側邊欄、工具列、按鈕，
+    # 讓學員存下來的畫面乾淨、只留學習卡本身的內容。
+    st.markdown(
+        """
+        <style>
+        @media print {
+            [data-testid="stSidebar"] { display: none !important; }
+            [data-testid="stHeader"] { display: none !important; }
+            [data-testid="stToolbar"] { display: none !important; }
+            #MainMenu { display: none !important; }
+            footer { display: none !important; }
+            .stButton { display: none !important; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.header("🎓 課後學習卡")
+    st.caption(
+        f"👤 {st.session_state.student_name}｜{st.session_state.student_venue}｜"
+        f"班別：{st.session_state.student_class}｜"
+        f"日期：{datetime.now():%Y-%m-%d}"
+    )
+
+    with st.expander("📱 想保留這張學習卡？點我看怎麼存到手機（存成 PDF 或截圖都可以）"):
+        st.markdown(
+            "**方法一：存成 PDF（推薦，畫面完整、乾淨）**\n"
+            "- **iPhone / Safari**：點畫面下方的「分享」圖示 ➜ 選「列印」➜ 預覽畫面用兩指「放大」一下 ➜ "
+            "左上角再點一次「分享」圖示 ➜ 選「儲存至檔案」或直接傳送給自己\n"
+            "- **Android / Chrome**：點右上角「⋮」選單 ➜ 「分享」➜「列印」➜ 目的地選「另存為 PDF」➜ 儲存\n\n"
+            "**方法二：直接截圖**\n"
+            "- 這頁內容比較長，建議捲動頁面分段截圖（例如分數對比一張、迷思題解答一張、場所提醒卡一張），"
+            "存到手機相簿即可。"
+        )
 
     pre = st.session_state.pretest_score or 0
     post = st.session_state.posttest_score or 0
