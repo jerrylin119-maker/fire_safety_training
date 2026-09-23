@@ -512,7 +512,7 @@ def build_report_pdf() -> bytes:
         pdf.multi_cell(0, size * 0.6, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(gap_after)
 
-    def body(text, size=11, color=(60, 60, 60)):
+    def body(text, size=11, color=(45, 45, 45)):
         pdf.set_font("NotoTC", size=size)
         pdf.set_text_color(*color)
         pdf.multi_cell(0, size * 0.62, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -521,7 +521,7 @@ def build_report_pdf() -> bytes:
     body(
         f"{st.session_state.student_name}　{st.session_state.student_venue}　"
         f"班別：{st.session_state.student_class}　日期：{datetime.now():%Y-%m-%d}",
-        size=10, color=(110, 110, 110),
+        size=10, color=(70, 70, 70),
     )
 
     title("前後測分數對比", size=13, gap_before=6)
@@ -541,10 +541,12 @@ def build_report_pdf() -> bytes:
     for i, q in enumerate(questions):
         selected = post_answers.get(q["id"], "（未作答）")
         correct = q["options"][q["correct_index"]]
-        mark = "正確" if selected == correct else "錯誤"
-        body(f"Q{i + 1}. {q['question']}", size=11, color=(30, 30, 30))
-        body(f"你的答案：{selected}（{mark}）　正確答案：{correct}", size=10, color=(90, 90, 90))
-        body(q["explanation"], size=9, color=(130, 130, 130))
+        is_correct = selected == correct
+        mark = "正確" if is_correct else "錯誤"
+        mark_color = (20, 120, 20) if is_correct else (180, 30, 30)
+        body(f"Q{i + 1}. {q['question']}", size=11, color=(20, 20, 20))
+        body(f"你的答案：{selected}（{mark}）　正確答案：{correct}", size=10, color=mark_color)
+        body(q["explanation"], size=9, color=(75, 75, 75))
         pdf.ln(2)
 
     title(f"{st.session_state.student_venue}　專屬課後提醒卡", size=13, gap_before=4)
