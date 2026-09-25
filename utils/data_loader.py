@@ -15,6 +15,7 @@ PREPOST_FILE = DATA_DIR / "prepost_test.json"
 CASES_FILE = DATA_DIR / "cases_data.json"
 VENUE_FILE = DATA_DIR / "venue_advice.json"
 SIMULATION_FILE = DATA_DIR / "simulation_data.json"
+SURVEY_FILE = DATA_DIR / "survey.json"
 CONTROL_FILE = DATA_DIR / "control_state.json"
 
 
@@ -78,10 +79,31 @@ def save_simulation(data: dict) -> None:
     _save(SIMULATION_FILE, data)
 
 
+# ---------- 課後滿意度調查題目 ----------
+DEFAULT_SURVEY = {
+    "title": "課後滿意度調查",
+    "intro": "感謝您參加本次課程，請花 1 分鐘回饋您的想法，作為我們改進的參考。",
+    "scale_labels": {"5": "非常滿意", "4": "滿意", "3": "普通", "2": "不滿意", "1": "非常不滿意"},
+    "questions": [{"id": "s1", "text": "整體而言，我對本次課程感到滿意"}],
+    "suggestion_prompt": "其他建議事項（沒有可留白）",
+}
+
+
+def get_survey() -> dict:
+    if not SURVEY_FILE.exists():
+        return DEFAULT_SURVEY
+    return _load(SURVEY_FILE)
+
+
+def save_survey(data: dict) -> None:
+    _save(SURVEY_FILE, data)
+
+
 # ---------- 全班共用的控制狀態（章節解鎖等） ----------
 def get_control_state() -> dict:
     if not CONTROL_FILE.exists():
-        default = {"unlocked_chapter": 1, "course_title": "防火管理訓練互動教學", "notice": "", "current_class": ""}
+        default = {"unlocked_chapter": 1, "course_title": "防火管理訓練互動教學", "notice": "", "current_class": "",
+                   "course_topic": "消防設備維護及管理"}
         _save(CONTROL_FILE, default)
         return default
     return _load(CONTROL_FILE)
@@ -98,6 +120,7 @@ def raw_json_text(which: str) -> str:
         "cases": CASES_FILE,
         "venue": VENUE_FILE,
         "simulation": SIMULATION_FILE,
+        "survey": SURVEY_FILE,
     }
     path = mapping[which]
     return path.read_text(encoding="utf-8")
@@ -110,6 +133,7 @@ def overwrite_from_upload(which: str, uploaded_bytes: bytes) -> None:
         "cases": CASES_FILE,
         "venue": VENUE_FILE,
         "simulation": SIMULATION_FILE,
+        "survey": SURVEY_FILE,
     }
     path = mapping[which]
     data = json.loads(uploaded_bytes.decode("utf-8"))  # 驗證格式

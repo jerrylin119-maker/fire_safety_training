@@ -10,6 +10,7 @@
     只要重新整理同一個網址，或回到簽到頁輸入代碼，就能接續先前的作答進度，
     不會因為斷線、關閉分頁而全部重來。
 """
+import html
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +39,7 @@ db.init_db()
 
 # ---------------- session_state 初始化 ----------------
 DEFAULTS = {
-    "stage": "onboarding",
+    "stage": "welcome",
     "student_id": None,
     "student_name": "",
     "student_venue": "",
@@ -113,9 +114,9 @@ if not st.session_state.student_id and not st.session_state.resume_attempted:
     if qp_sid:
         _restore_from_student_id(qp_sid)
 
-# 若尚未簽到卻不在簽到頁，一律導回簽到
-if st.session_state.stage != "onboarding" and st.session_state.student_id is None:
-    st.session_state.stage = "onboarding"
+# 若尚未簽到卻不在歡迎頁／簽到頁，一律導回歡迎頁
+if st.session_state.stage not in ("welcome", "onboarding") and st.session_state.student_id is None:
+    st.session_state.stage = "welcome"
 
 STAGE_LABELS = {
     "onboarding": "① 學員簽到",
@@ -123,7 +124,7 @@ STAGE_LABELS = {
     "cases": "③ 章節內容（觀念題＋案例）",
     "simulation": "④ 自衛消防編組闖關",
     "posttest": "⑤ 觀念後測",
-    "report": "⑥ 學習卡與總結",
+    "report": "⑥ 學習卡與滿意度調查",
 }
 
 
@@ -152,10 +153,50 @@ def sidebar_progress():
                 st.rerun()
 
 
+# ==================== ⓪ 歡迎頁 ====================
+def render_resume_box():
+    """中途離開的學員，輸入簽到代碼接續進度（歡迎頁與簽到頁共用）。"""
+    with st.expander("🔁 我是中途離開的學員，要繼續之前的進度"):
+        st.caption("輸入您簽到時取得的「簽到代碼」，即可接續作答進度。")
+        code = st.text_input("請輸入簽到代碼", key="resume_code_input")
+        if st.button("繼續之前的進度 ➜"):
+            if code.strip() and _restore_from_student_id(code.strip()):
+                st.rerun()
+            else:
+                st.error("找不到這組代碼，請確認輸入是否正確。")
+
+
+def render_welcome():
+    control = dl.get_control_state()
+    class_name = html.escape(control.get("current_class") or datetime.now().strftime("%Y-%m-%d"))
+    topic = control.get("course_topic") or "消防設備維護及管理"
+
+    st.markdown("<div style='text-align:center;font-size:60px;line-height:1.3;margin-top:8px'>🔥🧯🚨</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        f"<h1 style='text-align:center;line-height:1.5'>歡迎參加<br>{class_name} 期<br>防火管理人訓練班</h1>",
+        unsafe_allow_html=True,
+    )
+    st.info(
+        f"今天的課程是「**{topic}**」。\n\n"
+        "為強化學習效果，課程中將搭配此**互動教學系統**，接下來請簽到進入系統。"
+    )
+    if st.button("開始簽到 ➜", width="stretch", type="primary"):
+        st.session_state.stage = "onboarding"
+        st.rerun()
+    render_resume_box()
+
+
 # ==================== ① 學員簽到 ====================
 def render_onboarding():
     st.header("👋 學員簽到")
     st.write("請填寫以下資料，開始今天的防火管理訓練課程。")
+    st.warning(
+        "📌 **請務必記下您的「簽到代碼」**\n\n"
+        "簽到成功後，代碼會顯示在畫面**左側**（手機請點左上角「»」展開側邊欄），"
+        "也會顯示在前測頁面最上方。若中途跳出系統、網頁重新整理或斷線，"
+        "回到本頁下方的「我是中途離開的學員」輸入代碼，就能接續進度。"
+    )
     venues = dl.get_venue_categories()
     with st.form("onboarding_form"):
         name = st.text_input("姓名")
@@ -184,14 +225,7 @@ def render_onboarding():
         st.rerun()
 
     st.divider()
-    with st.expander("🔁 我是中途離開的學員，要繼續之前的進度"):
-        st.caption("簽到成功後，畫面跟側邊欄會顯示一組「簽到代碼」，輸入該代碼即可接續作答進度。")
-        code = st.text_input("請輸入簽到代碼", key="resume_code_input")
-        if st.button("繼續之前的進度 ➜"):
-            if code.strip() and _restore_from_student_id(code.strip()):
-                st.rerun()
-            else:
-                st.error("找不到這組代碼，請確認輸入是否正確。")
+    render_resume_box()
 
 
 # ==================== ② / ⑤ 前測與後測（共用邏輯） ====================
@@ -205,6 +239,10 @@ def render_test(phase: str):
 
     if not already_done:
         if phase == "pre":
+            st.info(
+                f"🔑 **您的簽到代碼：{st.session_state.student_id}**　請記下來或截圖！"
+                "若中途跳出系統，回到簽到頁輸入這組號碼即可接續進度。"
+            )
             st.caption("提交後僅會顯示您的「分數」，正確解答將於課程最後的學習卡中一併公布，請放心作答！")
         else:
             st.caption("這是與前測相同的題目，看看你的觀念進步了多少！")
@@ -565,6 +603,40 @@ def build_report_pdf() -> bytes:
     return bytes(pdf.output())
 
 
+# ==================== ⑥-2 課後滿意度調查 ====================
+def render_survey():
+    survey = dl.get_survey()
+    st.divider()
+    st.subheader(f"📝 {survey.get('title', '課後滿意度調查')}")
+    if db.has_survey_response(st.session_state.student_id):
+        st.success("✅ 已收到您的回饋，感謝您的填寫！")
+        return
+
+    if survey.get("intro"):
+        st.write(survey["intro"])
+    labels = survey.get("scale_labels", {})
+    options = [f"{n}　{labels.get(str(n), '')}".strip() for n in (5, 4, 3, 2, 1)]
+
+    with st.form("survey_form"):
+        picked = {}
+        for q in survey.get("questions", []):
+            st.markdown(f"**{q['text']}**")
+            picked[q["id"]] = st.radio(
+                q["text"], options, index=None, horizontal=True,
+                key=f"survey_{q['id']}", label_visibility="collapsed",
+            )
+        suggestion = st.text_area(survey.get("suggestion_prompt", "建議事項"), height=120)
+        submitted = st.form_submit_button("送出滿意度調查", width="stretch")
+
+    if submitted:
+        if any(v is None for v in picked.values()):
+            st.error("請先為每一題選擇滿意程度（建議事項可以留白）。")
+            return
+        answers = {qid: int(v[0]) for qid, v in picked.items()}
+        db.save_survey_response(st.session_state.student_id, answers, suggestion.strip())
+        st.rerun()
+
+
 # ==================== ⑥ 學習卡與總結 ====================
 def render_report():
     # 只在「列印 / 存成PDF」時生效的樣式：隱藏側邊欄、工具列、按鈕，
@@ -671,12 +743,15 @@ def render_report():
 
     st.divider()
     st.success(f"🎉 恭喜 {st.session_state.student_name}，完成本次防火管理訓練課程！")
+    st.caption("最後，請花 1 分鐘填寫下方的課後滿意度調查 👇")
+    render_survey()
 
 
 # ==================== 主流程路由 ====================
 sidebar_progress()
 
 ROUTES = {
+    "welcome": render_welcome,
     "onboarding": render_onboarding,
     "pretest": lambda: render_test("pre"),
     "cases": render_cases,

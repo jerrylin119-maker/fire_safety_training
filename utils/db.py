@@ -96,6 +96,14 @@ def init_db():
             updated_at TEXT
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS survey_responses (
+            student_id INTEGER PRIMARY KEY,
+            answers TEXT,          -- JSON：{題目id: 1~5 分}
+            suggestion TEXT,       -- 建議事項（自由填寫）
+            created_at TEXT
+        )
+    """)
     # 相容舊資料庫：補上後來才新增的欄位。
     _ensure_column(conn, "case_answers", "item_type", "TEXT DEFAULT 'case'")
     _ensure_column(conn, "students", "class_id", "TEXT")
@@ -169,6 +177,26 @@ def save_sim_log(student_id: int, node_id: str, task_id: str, selected_key: str,
     )
     conn.commit()
     conn.close()
+
+
+def save_survey_response(student_id: int, answers: dict, suggestion: str):
+    """儲存（或覆蓋）該學員的課後滿意度調查回覆。"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO survey_responses (student_id, answers, suggestion, created_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(student_id) DO UPDATE SET answers=excluded.answers, suggestion=excluded.suggestion, "
+        "created_at=excluded.created_at",
+        (student_id, json.dumps(answers, ensure_ascii=False), suggestion, _now()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def has_survey_response(student_id: int) -> bool:
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM survey_responses WHERE student_id = ?", (student_id,)).fetchone()
+    conn.close()
+    return row is not None
 
 
 def save_progress(student_id: int, data: dict):
@@ -311,6 +339,25 @@ def get_sim_log_df(class_id: str | None = None) -> pd.DataFrame:
     return df
 
 
+def get_survey_df(class_id: str | None = None) -> pd.DataFrame:
+    """滿意度調查原始回覆（answers 為 JSON 字串），可依班別篩選。"""
+    conn = get_conn()
+    sql = """
+        SELECT sr.student_id, s.name, s.venue, s.position, s.class_id,
+               sr.created_at, sr.answers, sr.suggestion
+        FROM survey_responses sr
+        JOIN students s ON s.id = sr.student_id
+        {where}
+        ORDER BY sr.created_at DESC
+    """
+    if class_id:
+        df = pd.read_sql_query(sql.format(where="WHERE s.class_id = ?"), conn, params=(class_id,))
+    else:
+        df = pd.read_sql_query(sql.format(where=""), conn)
+    conn.close()
+    return df
+
+
 def get_content_accuracy(student_id: int) -> dict:
     """該學員在章節內容（案例＋觀念題）的正確率。"""
     conn = get_conn()
@@ -338,7 +385,7 @@ def get_sim_accuracy(student_id: int) -> dict:
 def reset_all_data():
     """危險操作：清空所有作答紀錄與簽到名冊（課後打包完畢、準備開下一班時使用）。"""
     conn = get_conn()
-    for table in ["students", "test_answers", "case_answers", "sim_log", "progress"]:
+    for table in ["students", "test_answers", "case_answers", "sim_log", "progress", "survey_responses"]:
         conn.execute(f"DELETE FROM {table}")
     conn.commit()
     conn.close()

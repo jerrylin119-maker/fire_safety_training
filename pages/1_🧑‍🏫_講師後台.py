@@ -6,9 +6,7 @@
 - 題庫動態管理：st.data_editor 線上編輯，或直接上傳 JSON 檔案整份置換
 - 章節解鎖控制：控制全班學員手機端可看到的章節進度
 """
-import io
 import json
-import zipfile
 from datetime import datetime
 
 import altair as alt
@@ -18,6 +16,7 @@ import streamlit as st
 from utils import data_loader as dl
 from utils import db
 from utils.helpers import check_admin_password
+from utils.reporting import build_class_package, expand_survey_df, survey_summary
 
 st.set_page_config(page_title="講師後台 - 防火管理訓練系統", page_icon="🧑‍🏫", layout="wide")
 db.init_db()
@@ -163,64 +162,6 @@ def df_to_chapters(cases_df: pd.DataFrame, quiz_df: pd.DataFrame, reminder_df: p
     return sorted(chapters.values(), key=lambda c: c["unlock_order"])
 
 
-# ==================== 班別打包工具 ====================
-def _build_class_summary_md(class_id: str) -> str:
-    students_df = db.get_students_df(class_id)
-    scores_df = db.get_test_scores_df(class_id)
-    case_df = db.get_case_answers_df(class_id)
-    sim_df = db.get_sim_log_df(class_id)
-
-    lines = [f"# 班別打包報告：{class_id}", "", f"匯出時間：{datetime.now():%Y-%m-%d %H:%M:%S}", ""]
-    lines.append(f"## 簽到人數：{len(students_df)} 人")
-    if not students_df.empty:
-        lines.append("")
-        lines.append("### 場所類別分布")
-        for venue, cnt in students_df["venue"].value_counts().items():
-            lines.append(f"- {venue}：{cnt} 人")
-
-    lines.append("")
-    lines.append("## 前後測成績")
-    if scores_df.empty:
-        lines.append("（尚無前後測作答紀錄）")
-    else:
-        pivot = scores_df.pivot_table(index="student_id", columns="phase", values="score")
-        pre_avg = pivot["pre"].mean() if "pre" in pivot.columns else None
-        post_avg = pivot["post"].mean() if "post" in pivot.columns else None
-        lines.append(f"- 前測平均：{pre_avg:.1f} 分" if pre_avg is not None else "- 前測平均：無資料")
-        lines.append(f"- 後測平均：{post_avg:.1f} 分" if post_avg is not None else "- 後測平均：無資料")
-        if pre_avg is not None and post_avg is not None:
-            lines.append(f"- 平均進步：{post_avg - pre_avg:+.1f} 分")
-
-    lines.append("")
-    lines.append("## 章節內容（觀念題＋案例）整體正確率")
-    if case_df.empty:
-        lines.append("（尚無作答紀錄）")
-    else:
-        lines.append(f"- 共 {len(case_df)} 題作答，整體正確率 {case_df['is_correct'].mean() * 100:.1f}%")
-
-    lines.append("")
-    lines.append("## 闖關模擬整體正確率")
-    if sim_df.empty:
-        lines.append("（尚無闖關紀錄）")
-    else:
-        lines.append(f"- 共 {len(sim_df)} 個決策點，整體正確率 {sim_df['is_correct'].mean() * 100:.1f}%")
-
-    return "\n".join(lines)
-
-
-def build_class_package(class_id: str) -> bytes:
-    """把某個班別的完整資料打包成一個 ZIP（含摘要報告 + 4 份原始資料 CSV）。"""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("summary.md", _build_class_summary_md(class_id))
-        zf.writestr("roster.csv", db.get_students_df(class_id).to_csv(index=False))
-        zf.writestr("test_scores.csv", db.get_test_scores_df(class_id).to_csv(index=False))
-        zf.writestr("case_answers.csv", db.get_case_answers_df(class_id).to_csv(index=False))
-        zf.writestr("sim_log.csv", db.get_sim_log_df(class_id).to_csv(index=False))
-    buf.seek(0)
-    return buf.getvalue()
-
-
 # ==================== 分頁 ====================
 tab_dash, tab_class, tab_unlock, tab_prepost, tab_cases, tab_sim, tab_sys = st.tabs(
     ["📊 即時儀表板", "🗂️ 班別管理", "🔓 章節解鎖控制", "📝 前後測題庫", "📖 案例題庫", "🧯 闖關劇本", "⚙️ 系統設定"]
@@ -281,8 +222,38 @@ with tab_dash:
                 st.altair_chart(bar, width="stretch")
 
         st.divider()
+        st.subheader("😊 課後滿意度調查結果")
+        survey_cfg = dl.get_survey()
+        survey_raw_df = db.get_survey_df(selected_class)
+        if survey_raw_df.empty:
+            st.info("目前尚無學員填寫課後滿意度調查。")
+        else:
+            st.caption(f"已有 {len(survey_raw_df)} 人填寫（簽到 {len(students_df)} 人）。分數 1~5，5 分最滿意。")
+            summary_df = survey_summary(survey_raw_df, survey_cfg.get("questions", []))
+            sc1, sc2 = st.columns([3, 2])
+            with sc1:
+                chart = (
+                    alt.Chart(summary_df).mark_bar()
+                    .encode(x=alt.X("平均分數:Q", scale=alt.Scale(domain=[0, 5])),
+                            y=alt.Y("題目:N", sort=None, axis=alt.Axis(labelLimit=400)),
+                            tooltip=["題目", "平均分數", "回覆人數"])
+                )
+                st.altair_chart(chart, width="stretch")
+            with sc2:
+                st.dataframe(summary_df, width="stretch", hide_index=True)
+            suggestions = survey_raw_df[survey_raw_df["suggestion"].fillna("").str.strip() != ""]
+            st.markdown("**📝 學員建議事項**")
+            if suggestions.empty:
+                st.caption("（沒有學員留下建議）")
+            else:
+                st.dataframe(
+                    suggestions[["name", "venue", "suggestion"]].rename(
+                        columns={"name": "姓名", "venue": "場所類別", "suggestion": "建議事項"}),
+                    width="stretch", hide_index=True)
+
+        st.divider()
         st.subheader("⬇️ 資料匯出（依目前篩選的班別）")
-        colA, colB, colC = st.columns(3)
+        colA, colB, colC, colD = st.columns(4)
         with colA:
             st.download_button("匯出簽到名冊 CSV", students_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"roster_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
@@ -297,6 +268,11 @@ with tab_dash:
             st.download_button("匯出闖關紀錄 CSV", sim_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"sim_log_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
                                 width="stretch", disabled=sim_df.empty)
+        with colD:
+            survey_export_df = expand_survey_df(db.get_survey_df(selected_class), survey_cfg.get("questions", []))
+            st.download_button("匯出滿意度調查 CSV", survey_export_df.to_csv(index=False).encode("utf-8-sig"),
+                                file_name=f"survey_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
+                                width="stretch", disabled=survey_export_df.empty)
 
     if st.button("🔄 重新整理儀表板"):
         st.rerun()
@@ -315,7 +291,7 @@ with tab_class:
 
     with st.form("class_form"):
         new_class = st.text_input(
-            "設定／更改「目前班別」名稱（建議用日期，或日期＋場次，例如 2026-09-23 或 2026-09-23-上午班）",
+            "設定／更改「目前班別」名稱（會顯示在學員歡迎畫面：「歡迎參加 ○○ 期防火管理人訓練班」，例如填 115-03、第12）",
             value=current_class or datetime.now().strftime("%Y-%m-%d"),
         )
         if st.form_submit_button("設定為目前班別", width="stretch"):
@@ -343,7 +319,7 @@ with tab_class:
     else:
         pkg_students_df = db.get_students_df(current_class)
         st.caption(f"將打包「{current_class}」，共 {len(pkg_students_df)} 位學員的資料"
-                   "（簽到名冊、前後測成績、章節作答、闖關紀錄、摘要報告）。")
+                   "（簽到名冊、前後測成績、章節作答、闖關紀錄、滿意度調查、摘要報告）。")
         if st.button("📦 產生打包檔", width="stretch", disabled=pkg_students_df.empty):
             st.session_state["_class_pkg_bytes"] = build_class_package(current_class)
             st.session_state["_class_pkg_name"] = current_class
@@ -434,9 +410,12 @@ with tab_unlock:
     st.divider()
     with st.form("course_settings_form"):
         title = st.text_input("課程標題（顯示於學員端側邊欄）", value=control.get("course_title", ""))
+        topic = st.text_input("今日課程主題（顯示於學員歡迎畫面：「今天的課程是 ○○」）",
+                              value=control.get("course_topic", "消防設備維護及管理"))
         notice = st.text_area("即時公告（顯示於學員端側邊欄，留空則不顯示）", value=control.get("notice", ""))
         if st.form_submit_button("儲存課程設定"):
             control["course_title"] = title
+            control["course_topic"] = topic.strip()
             control["notice"] = notice
             dl.save_control_state(control)
             st.success("已儲存！")
@@ -585,6 +564,28 @@ with tab_sys:
             st.error(f"檔案格式錯誤：{e}")
     st.download_button("⬇️ 下載目前 venue_advice.json", dl.raw_json_text("venue"),
                         file_name="venue_advice.json", mime="application/json")
+
+    st.divider()
+    st.subheader("😊 課後滿意度調查題目")
+    st.caption("直接編輯 JSON：questions 每題的 id 不能重複；scale_labels 是 1~5 分對應的文字；"
+               "suggestion_prompt 是「建議事項」欄位的提示文字。修改後學員下次進入結業頁面就會套用。")
+    survey_text = st.text_area("編輯 survey.json", value=dl.raw_json_text("survey"), height=320, key="survey_json_text")
+    if st.button("💾 驗證並儲存滿意度調查題目"):
+        try:
+            data = json.loads(survey_text)
+            qs = data.get("questions")
+            if not isinstance(qs, list) or not qs:
+                raise ValueError("questions 必須是至少一題的清單")
+            ids = [q["id"] for q in qs]
+            if len(set(ids)) != len(ids):
+                raise ValueError("題目 id 不能重複")
+            for q in qs:
+                if not q.get("text"):
+                    raise ValueError(f"題目 {q['id']} 缺少 text")
+            dl.save_survey(data)
+            st.success("已儲存！")
+        except Exception as e:
+            st.error(f"格式錯誤：{e}")
 
     st.divider()
     st.subheader("🔑 後台密碼")
