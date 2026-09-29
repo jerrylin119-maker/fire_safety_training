@@ -22,19 +22,23 @@ jobs:
     steps:
       - name: Ping the Streamlit app to keep it awake
         run: |
+          set +e   # 不要讓 GitHub Actions 預設的 errexit 在還沒印出診斷訊息前就砍斷腳本
           echo "造訪 App..."
           cookie_jar=$(mktemp)
-          resp_status=$(curl -s -L --max-time 60 --max-redirs 20 \
+          resp_status=$(curl -v -L --ipv4 --max-time 60 --max-redirs 20 \
             -c "$cookie_jar" -b "$cookie_jar" \
             -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
             -o /tmp/body.html -w "%{http_code}" \
-            "https://firesafetytraining-ttfd.streamlit.app/")
+            "https://firesafetytraining-ttfd.streamlit.app/" 2>/tmp/curl_verbose.log)
           curl_exit=$?
-          size=$(wc -c < /tmp/body.html)
+          size=$(wc -c < /tmp/body.html 2>/dev/null || echo 0)
           echo "curl 結束代碼：$curl_exit　回應狀態碼：$resp_status　內容大小：${size} bytes"
 
           if [ "$curl_exit" -ne 0 ]; then
-            echo "⚠️ curl 執行失敗（可能是連線逾時或轉址次數過多），請手動確認 App 是否正常運作。"
+            echo "⚠️ curl 執行失敗（curl 結束代碼 $curl_exit），請手動確認 App 是否正常運作。以下是詳細連線紀錄："
+            echo "----------------------------------------"
+            tail -n 60 /tmp/curl_verbose.log
+            echo "----------------------------------------"
             exit 1
           fi
           if [ "$resp_status" -ge 400 ]; then
