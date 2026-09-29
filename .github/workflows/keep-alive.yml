@@ -3,11 +3,17 @@ name: Keep Streamlit App Awake
 # Streamlit Community Cloud 的免費方案，App 太久沒有人瀏覽就會自動休眠，
 # 下次有人打開時要等它重新啟動。這個排程會定期自動「造訪」App 一次，
 # 讓它一直保持在有人使用的狀態，不會進入休眠。
+#
+# 注意：Streamlit Cloud 的網址第一次造訪時會經過 share.streamlit.io
+# 做一次帶 Cookie 的轉址（即使是公開 App 也一樣），所以 curl 一定要
+# 用 -c/-b 帶著同一個 cookie jar 走完整個轉址鏈，不然會被導向迴圈
+# 卡住、誤判成連不上。
 
 on:
   schedule:
-    # 每天造訪一次（UTC 04:00，約台灣時間中午 12:00）。
-    - cron: "0 4 * * *"
+    # 每天造訪 3 次（UTC 02:00 / 10:00 / 18:00，約台灣時間 10:00 / 18:00 / 02:00），
+    # 分散在一天內多次造訪，比一天一次更保險。
+    - cron: "0 2,10,18 * * *"
   workflow_dispatch: {}  # 也可以到 GitHub 的 Actions 頁面手動點擊執行，測試用
 
 jobs:
@@ -17,12 +23,28 @@ jobs:
       - name: Ping the Streamlit app to keep it awake
         run: |
           echo "造訪 App..."
-          status=$(curl -s -o /dev/null -w "%{http_code}" -L --max-time 30 \
-            -A "Mozilla/5.0 (keep-alive-bot)" \
+          cookie_jar=$(mktemp)
+          resp_status=$(curl -s -L --max-time 60 --max-redirs 20 \
+            -c "$cookie_jar" -b "$cookie_jar" \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" \
+            -o /tmp/body.html -w "%{http_code}" \
             "https://firesafetytraining-ttfd.streamlit.app/")
-          echo "回應狀態碼：$status"
-          if [ "$status" -ge 400 ]; then
-            echo "⚠️ 網站回應異常，狀態碼 $status，請手動確認 App 是否正常運作。"
+          curl_exit=$?
+          size=$(wc -c < /tmp/body.html)
+          echo "curl 結束代碼：$curl_exit　回應狀態碼：$resp_status　內容大小：${size} bytes"
+
+          if [ "$curl_exit" -ne 0 ]; then
+            echo "⚠️ curl 執行失敗（可能是連線逾時或轉址次數過多），請手動確認 App 是否正常運作。"
+            exit 1
+          fi
+          if [ "$resp_status" -ge 400 ]; then
+            echo "⚠️ 網站回應異常，狀態碼 $resp_status，請手動確認 App 是否正常運作。"
+            cat /tmp/body.html
+            exit 1
+          fi
+          if [ "$size" -lt 500 ]; then
+            echo "⚠️ 回應內容太小（可能沒有正確載入頁面），請手動確認 App 是否正常運作。"
+            cat /tmp/body.html
             exit 1
           fi
           echo "✅ 造訪成功，App 應該不會進入休眠。"
