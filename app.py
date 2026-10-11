@@ -430,6 +430,34 @@ def render_cases():
 
 
 # ==================== ④ 自衛消防編組模擬闖關 ====================
+def render_recommended_order(sim):
+    """闖關結束後，以方格逐項浮現「建議應變順序」，與簡報「情境模擬：建議應變順序」頁一致。"""
+    steps = sim.get("recommended_order") or []
+    if not steps:
+        return
+    st.markdown("### 📋 建議應變順序（請牢記）")
+    cells = "".join(
+        f"<div class='ro-item' style='animation-delay:{i * 0.6:.1f}s'>"
+        f"<div class='ro-num'>{i + 1}</div>"
+        f"<div class='ro-t'>{html.escape(s.get('title', ''))}</div>"
+        f"<div class='ro-d'>{html.escape(s.get('desc', ''))}</div></div>"
+        for i, s in enumerate(steps)
+    )
+    st.markdown(
+        "<style>"
+        ".ro-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:8px 0 18px}"
+        ".ro-item{opacity:0;animation:roIn .5s ease forwards;background:#fbe9e9;border:2px solid #d62828;"
+        "border-radius:12px;padding:12px 12px 10px;color:#22252a}"
+        ".ro-num{width:30px;height:30px;border-radius:50%;background:#d62828;color:#fff;font-weight:700;"
+        "display:flex;align-items:center;justify-content:center;margin-bottom:6px}"
+        ".ro-t{font-weight:700;font-size:1.05em}.ro-d{font-size:.85em;color:#6b7280;margin-top:2px}"
+        "@keyframes roIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}"
+        "</style>"
+        f"<div class='ro-grid'>{cells}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_simulation():
     sim = dl.get_simulation()
     if st.session_state.sim_node is None:
@@ -453,6 +481,7 @@ def render_simulation():
             box(message)
         else:
             box(ending["message"])
+        render_recommended_order(sim)
         if st.button("前往下一階段：觀念後測 ➜", width="stretch"):
             st.session_state.stage = "posttest"
             persist_progress()
