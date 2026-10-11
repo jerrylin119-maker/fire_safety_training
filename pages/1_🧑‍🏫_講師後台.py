@@ -353,7 +353,9 @@ with tab_unlock:
     control = dl.get_control_state()
     chapters = sorted(dl.get_chapters(), key=lambda c: c["unlock_order"])
 
-    st.metric("目前已解鎖至", f"第 {control.get('unlocked_chapter', 1)} 節")
+    _cur = control.get('unlocked_chapter', 1)
+    _cur_title = next((c["chapter_title"] for c in chapters if c["unlock_order"] == _cur), f"第 {_cur} 段")
+    st.metric("目前已解鎖至", _cur_title)
     cols = st.columns(len(chapters) if chapters else 1)
     for i, ch in enumerate(chapters):
         with cols[i]:
@@ -361,7 +363,7 @@ with tab_unlock:
                          width="stretch"):
                 control["unlocked_chapter"] = ch["unlock_order"]
                 dl.save_control_state(control)
-                st.success(f"已解鎖至第 {ch['unlock_order']} 節！")
+                st.success(f"已解鎖至：{ch['chapter_title']}！")
                 st.rerun()
 
     st.divider()
