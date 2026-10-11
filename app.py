@@ -121,8 +121,8 @@ if st.session_state.stage not in ("welcome", "onboarding") and st.session_state.
 STAGE_LABELS = {
     "onboarding": "① 學員簽到",
     "pretest": "② 迷思破除前測",
-    "cases": "③ 章節內容（觀念題＋案例）",
-    "simulation": "④ 自衛消防編組闖關",
+    "cases": "③ 第一、二堂：章節觀念題與案例",
+    "simulation": "④ 第三堂：自衛消防編組闖關",
     "posttest": "⑤ 觀念後測",
     "report": "⑥ 學習卡與滿意度調查",
 }
@@ -308,6 +308,17 @@ def _get_unlocked_flat_items():
             if ch.get("reminder"):
                 flat.append({**ch["reminder"], "_type": "reminder", "chapter_id": ch["chapter_id"],
                              "chapter_title": ch["chapter_title"]})
+    # 依章節編題號（觀念題＋案例題），與簡報上的「系統互動｜第X堂 第N題」標籤一致
+    totals = {}
+    for it in flat:
+        if it["_type"] in ("quiz", "case"):
+            totals[it["chapter_id"]] = totals.get(it["chapter_id"], 0) + 1
+    counters = {}
+    for it in flat:
+        if it["_type"] in ("quiz", "case"):
+            counters[it["chapter_id"]] = counters.get(it["chapter_id"], 0) + 1
+            it["_qno"] = counters[it["chapter_id"]]
+            it["_qtotal"] = totals[it["chapter_id"]]
     return flat, unlocked_chapter, max_order
 
 
@@ -397,7 +408,7 @@ def render_cases():
     if ptr >= len(flat_items):
         if unlocked_chapter >= max_order:
             st.success("🎉 所有章節內容都已完成！")
-            if st.button("前往下一階段：自衛消防編組闖關 ➜", width="stretch"):
+            if st.button("前往第三堂：自衛消防編組闖關 ➜", width="stretch"):
                 st.session_state.stage = "simulation"
                 persist_progress()
                 st.rerun()
@@ -406,7 +417,10 @@ def render_cases():
         return
 
     item = flat_items[ptr]
-    st.caption(item["chapter_title"])
+    if item.get("_qno"):
+        st.markdown(f"**📍 {item['chapter_title']}｜第 {item['_qno']} 題**（本節共 {item['_qtotal']} 題）")
+    else:
+        st.markdown(f"**📍 {item['chapter_title']}**")
     if item["_type"] == "quiz":
         _render_quiz_item(item)
     elif item["_type"] == "reminder":
