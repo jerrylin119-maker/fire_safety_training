@@ -1,9 +1,9 @@
 """P型火警受信總機模擬器。
 
 靜態檔在 ``static/fire_panel/``（``index.html`` + ``alarm.mp3``）。
-頁面用 iframe 載入 ``/app/static/fire_panel/index.html``，這樣模擬器裡的
-相對路徑 ``alarm.mp3`` 才解析得到。不要把整份 HTML 塞進 srcdoc：
-相對音檔會失效，而且內嵌 base64 約 4MB，手機開頁會很慢。
+手機請直接開靜態頁，不要先進入 Streamlit：Community Cloud 會把 App
+掛在 ``/~/+/``，根目錄的 ``/app/static/`` 只會得到外層載入頁，iframe
+裡會再跑一次 Streamlit，手機就會一直轉圈。
 
 未來自衛編組闖關可以直接嵌入，不必再做一個頁面：
 
@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import streamlit as st
 
@@ -26,7 +26,9 @@ PAGE_URL_PATH = "火警受信總機模擬器"
 PAGE_SCRIPT = "pages/2_🚨_火警受信總機模擬器.py"
 # 給 QR code 用的 ASCII 參數：/?page=fire-panel 會轉到上面那個頁面。
 QUERY_VALUE = "fire-panel"
-PANEL_SRC = "/app/static/fire_panel/index.html"
+# Community Cloud 的瀏覽器路徑前綴。App 實際掛在這裡，不是網域根目錄。
+_CLOUD_MOUNT = "/~/+"
+_STATIC_PATH = "/app/static/fire_panel/index.html"
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static" / "fire_panel"
 
@@ -65,9 +67,62 @@ _VIEWPORT_CSS = """
 """
 
 
+def _public_origin_and_host() -> tuple[str, str]:
+    """學員瀏覽器上的來源與主機名。
+
+    ``st.context.url`` 在 Cloud 上是最外層網址（不含 ``/~/+/``），
+    用來判斷是不是 ``*.streamlit.app``，以及組出完整連結。
+    """
+    url = ""
+    try:
+        url = st.context.url or ""
+    except Exception:
+        url = ""
+    if url:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}", host
+    host = ""
+    try:
+        raw = st.context.headers.get("Host") or ""
+        host = raw.split(":")[0].lower()
+    except Exception:
+        host = ""
+    return "", host
+
+
+def static_mount_prefix() -> str:
+    """靜態檔在瀏覽器裡的路徑前綴。本機是空字串，Cloud 是 ``/~/+``。"""
+    _origin, host = _public_origin_and_host()
+    if host.endswith(".streamlit.app"):
+        return _CLOUD_MOUNT
+    try:
+        from streamlit import config as st_config
+
+        base = (st_config.get_option("server.baseUrlPath") or "").strip("/")
+    except Exception:
+        base = ""
+    return f"/{base}" if base else ""
+
+
+def static_page_path() -> str:
+    """給 iframe / 連結用的路徑，已含 Cloud 掛載前綴。"""
+    return f"{static_mount_prefix()}{_STATIC_PATH}"
+
+
+def static_page_url(app_base: str | None = None) -> str:
+    """模擬器靜態頁的完整網址。QR code 請用這個，不要用 Streamlit 頁。"""
+    path = static_page_path()
+    if app_base:
+        return f"{app_base.rstrip('/')}{path}"
+    origin, _host = _public_origin_and_host()
+    return f"{origin}{path}" if origin else path
+
+
 def fire_panel_url(app_base: str) -> str:
-    """模擬器頁面的直接網址（QR code 可指向這個路徑）。"""
-    return f"{app_base.rstrip('/')}/{PAGE_URL_PATH}"
+    """學員應使用的直接網址（靜態頁，可當 QR code）。"""
+    return static_page_url(app_base)
 
 
 def query_requests_fire_panel() -> bool:
@@ -89,7 +144,12 @@ def query_requests_fire_panel() -> bool:
     return QUERY_VALUE in values
 
 
-def render_fire_panel(*, height: int = 960, fill_viewport: bool = False) -> None:
+def render_fire_panel(
+    *,
+    height: int = 960,
+    fill_viewport: bool = False,
+    show_open_link: bool = True,
+) -> None:
     """在目前頁面嵌入可操作的受信總機模擬器。
 
     Parameters
@@ -100,13 +160,32 @@ def render_fire_panel(*, height: int = 960, fill_viewport: bool = False) -> None
     fill_viewport:
         True 時讓 iframe 盡量佔滿視窗，內容超出時在 iframe 裡捲動。
         給獨立的模擬器頁用。嵌在其他流程請維持 False。
+    show_open_link:
+        顯示「全螢幕開啟」。連結用 ``target=_top``，手機會離開
+        Streamlit 外框，直接打開靜態模擬器。
     """
     _ensure_ready()
+    page = static_page_path()
+    if show_open_link:
+        _render_open_link(static_page_url(), compact=not fill_viewport)
     if fill_viewport:
         st.markdown(_VIEWPORT_CSS, unsafe_allow_html=True)
-        _embed(PANEL_SRC, height=max(height, 720))
+        _embed(page, height=max(height, 720))
         return
-    _embed(PANEL_SRC, height=height)
+    _embed(page, height=height)
+
+
+def _render_open_link(url: str, *, compact: bool) -> None:
+    pad = "10px 12px" if compact else "14px 12px"
+    size = "1rem" if compact else "1.15rem"
+    st.markdown(
+        f'<a href="{url}" target="_top" rel="noopener" '
+        f'style="display:block;text-align:center;background:#c53030;color:#fff;'
+        f'font-weight:800;font-size:{size};line-height:1.35;padding:{pad};'
+        f'border-radius:10px;text-decoration:none;margin:0 0 8px">'
+        f"📱 全螢幕開啟（手機請點這裡）</a>",
+        unsafe_allow_html=True,
+    )
 
 
 def _ensure_ready() -> None:
