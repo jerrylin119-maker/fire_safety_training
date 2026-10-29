@@ -1,0 +1,4 @@
+# 讓 static/ 可從 /app/static/ 讀取。
+# 火警受信總機模擬器放在 iframe 裡，音檔必須用這個網址才能載入相對路徑 alarm.mp3。
+[server]
+enableStaticServing = true

@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P型火警受信總機模擬器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  body {
+    background: #1e242b;
+    font-family: "PingFang TC", "Microsoft JhengHei", sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+    gap: 30px;
+  }
+
+  /* 總機外鐵箱 */
+  .cabinet {
+    width: 580px;
+    background: #eceef0;
+    border: 4px solid #b8bcc2;
+    border-radius: 6px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.6), inset 0 0 10px rgba(0,0,0,0.1);
+    padding: 20px;
+  }
+  .cabinet-title-box {
+    text-align: center;
+    margin-bottom: 15px;
+  }
+  .cabinet-title {
+    display: inline-block;
+    border: 2px solid #222;
+    padding: 4px 25px;
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: 5px;
+    background: #fff;
+    color: #111;
+  }
+
+  /* 內面板 (青綠灰色底) */
+  .inner-panel {
+    background: #7a9e9f;
+    border: 3px solid #537172;
+    border-radius: 4px;
+    padding: 16px;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.25);
+  }
+
+  /* 迴路顯示區 (1L ~ 5L) */
+  .loop-box {
+    background: #f8fafc;
+    border: 2px solid #3d5657;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 15px;
+  }
+  .loop-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+  .loop-item {
+    border: 1px solid #aaa;
+    background: #fff;
+    border-radius: 3px;
+    text-align: center;
+    padding: 6px 2px;
+  }
+  .led {
+    width: 11px;
+    height: 11px;
+    background: #555;
+    border-radius: 50%;
+    margin: 0 auto 4px;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.6);
+  }
+  .led.red.on { background: #ff1100; box-shadow: 0 0 8px #ff1100; }
+  .led.green.on { background: #00e640; box-shadow: 0 0 8px #00e640; }
+  .led.yellow.on { background: #ffaa00; box-shadow: 0 0 8px #ffaa00; }
+
+  .loop-name { font-size: 13px; font-weight: bold; color: #222; border-bottom: 1px solid #eee; padding-bottom: 2px; }
+  .loop-sub { font-size: 11px; color: #666; margin-top: 2px; }
+  .loop-btn {
+    width: 32px;
+    height: 10px;
+    background: #e0e0e0;
+    border: 1px solid #999;
+    border-radius: 3px;
+    margin: 6px auto 0;
+    cursor: pointer;
+  }
+
+  /* 中間指示燈與電壓表區 */
+  .middle-section {
+    border: 1px solid #fff;
+    display: grid;
+    grid-template-columns: 100px 110px 1fr;
+    background: rgba(255,255,255,0.1);
+    color: #111;
+    font-size: 11px;
+    font-weight: bold;
+    margin-bottom: 15px;
+  }
+  .m-col {
+    border-right: 1px solid #fff;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .m-col:last-child { border-right: none; }
+  .m-header { text-align: center; border-bottom: 1px solid #fff; padding-bottom: 4px; margin-bottom: 6px; }
+
+  /* 電壓表 */
+  .meter {
+    background: #fff;
+    height: 65px;
+    border: 1px solid #555;
+    position: relative;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .meter-scale {
+    font-size: 8px;
+    text-align: center;
+    margin-top: 2px;
+    color: #444;
+  }
+  .meter-needle {
+    width: 1px;
+    height: 48px;
+    background: red;
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    transform-origin: bottom center;
+    transform: rotate(20deg);
+    transition: transform 0.3s;
+  }
+
+  /* 火警總燈 */
+  .fire-main-indicator {
+    background: #330000;
+    border: 2px solid #222;
+    color: #555;
+    text-align: center;
+    padding: 6px 0;
+    font-size: 18px;
+    letter-spacing: 4px;
+    font-weight: 900;
+    margin-bottom: 8px;
+  }
+  .fire-main-indicator.on {
+    background: #ff0000;
+    color: #fff;
+    box-shadow: 0 0 15px #ff0000;
+    animation: flash 0.6s infinite alternate;
+  }
+  @keyframes flash { from { opacity: 1; } to { opacity: 0.4; } }
+
+  .status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .status-list-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+
+  /* 下方切換開關區 */
+  .bottom-switches {
+    border: 1px solid #fff;
+    padding: 6px;
+    background: rgba(255,255,255,0.08);
+  }
+  .switch-group-titles {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr) 1.2fr repeat(2, 1fr);
+    text-align: center;
+    font-size: 10px;
+    font-weight: bold;
+    color: #0d2a2a;
+    border-bottom: 1px solid #fff;
+    padding-bottom: 3px;
+    margin-bottom: 6px;
+  }
+  .switch-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr) 1.2fr repeat(2, 1fr);
+    gap: 4px;
+  }
+  .sw-unit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    font-size: 9px;
+    color: #111;
+  }
+
+  /* 紅色搖臂開關 */
+  .rocker {
+    width: 24px;
+    height: 38px;
+    background: #2b0c09;
+    border: 1px solid #111;
+    border-radius: 2px;
+    position: relative;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  }
+  .rocker-lever {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    height: 18px;
+    background: #e74c3c;
+    border: 1px solid #962d22;
+    border-radius: 1px;
+    box-shadow: inset 0 2px 2px rgba(255,255,255,0.5);
+    transition: all 0.1s ease;
+  }
+  .rocker.pos-up .rocker-lever { top: 2px; }
+  .rocker.pos-down .rocker-lever {
+    bottom: 2px;
+    background: #a82315;
+    box-shadow: inset 0 -2px 2px rgba(0,0,0,0.6);
+  }
+
+  /* 外部演練觸發測試台 */
+  .test-bench {
+    width: 260px;
+    background: #2d3748;
+    border: 3px solid #4a5568;
+    border-radius: 8px;
+    padding: 16px;
+    color: #eee;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  }
+  .test-title {
+    font-size: 15px;
+    font-weight: bold;
+    text-align: center;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    color: #e2e8f0;
+  }
+  .test-btn {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    color: white;
+    background: #3182ce;
+    transition: 0.1s;
+    box-shadow: 0 3px 0 #2b6cb0;
+  }
+  .test-btn:active { transform: translateY(3px); box-shadow: none; }
+  .test-btn.fire { background: #e53e3e; box-shadow: 0 3px 0 #9b2c2c; }
+  .test-btn.trouble { background: #d69e2e; box-shadow: 0 3px 0 #975a16; }
+</style>
+<style>
+/* v4 版面：總機維持原尺寸，不被壓縮 */
+body{flex-wrap:wrap;align-items:flex-start}
+#panelWrap{flex:0 0 auto}
+.cabinet{flex-shrink:0}
+.test-bench{flex:0 0 auto}
+.ext-wrap{flex:1 1 100%;width:100%}
+#reportPanel{flex:1 1 100%}
+#tabBar{display:none}
+.rocker,.ext-btn,.test-btn,.eb-zone,.zone-click{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+@media (max-width:820px){
+  body{display:block;padding:56px 6px 12px;min-height:auto}
+  #tabBar{display:flex;position:fixed;top:0;left:0;right:0;z-index:99;background:#111;gap:2px;padding:4px}
+  #tabBar button{flex:1;min-height:46px;font-size:15px;border:none;border-radius:6px;background:#4a5568;color:#fff;font-weight:700}
+  #tabBar button.act{background:#e53e3e}
+  .sec{display:none!important}
+  .sec.show{display:block!important}
+  #panelWrap{overflow:hidden;margin:0 auto}
+  .ext-wrap{display:block;margin:0}
+  .ext-box{margin-bottom:10px}
+  .test-bench{width:auto!important;margin:0}
+  .ext-btn,.test-btn{min-height:46px;min-width:46px;font-size:16px}
+  .test-btn{width:100%;margin:6px 0}
+  .eb-zone{min-height:44px;padding:8px 12px}
+  #reportPanel{padding:10px;margin:10px 0}
+  #reportPanel table{font-size:12px}
+}
+@media print{#tabBar{display:none!important}}
+</style>
+<script>
+(function(){
+  const mq=matchMedia('(max-width:820px)');
+  function fit(){ const w=document.getElementById('panelWrap'), c=w&&w.querySelector('.cabinet'); if(!c) return;
+    c.style.zoom=''; if(!mq.matches) return; const avail=document.documentElement.clientWidth-12; const z=Math.min(1,avail/c.offsetWidth); c.style.zoom=z; }
+  function show(t){ document.querySelectorAll('#tabBar button').forEach(b=>b.classList.toggle('act',b.dataset.t===t));
+    document.querySelectorAll('.sec').forEach(e=>e.classList.toggle('show',e.dataset.sec===t)); if(t==='log'){const r=document.getElementById('reportPanel'); if(r&&r.style.display==='none') r.classList.remove('show');} fit(); window.scrollTo(0,0); }
+  window.showTab=show;
+  document.addEventListener('DOMContentLoaded',()=>{ document.querySelectorAll('#tabBar button').forEach(b=>b.addEventListener('click',()=>show(b.dataset.t))); show('panel');
+    const r=document.getElementById('reportPanel'); new MutationObserver(()=>{ if(mq.matches&&r.style.display==='block') show('log'); }).observe(r,{attributes:true,attributeFilter:['style']}); });
+  addEventListener('resize',fit); mq.addEventListener('change',fit);
+  // iOS：第一次觸碰時解鎖音訊與語音
+  function unlock(){ try{ initAudio(); if(audioCtx.state==='suspended') audioCtx.resume();
+      const b=audioCtx.createBuffer(1,1,22050), s=audioCtx.createBufferSource(); s.buffer=b; s.connect(audioCtx.destination); s.start(0);
+      if(typeof ALARM_AUDIO_SRC!=='undefined'&&ALARM_AUDIO_SRC){ if(!alarmAudioEl){alarmAudioEl=new Audio(ALARM_AUDIO_SRC);alarmAudioEl.loop=true;}
+        alarmAudioEl.muted=true; alarmAudioEl.play().then(()=>{ if(!isFire){alarmAudioEl.pause();alarmAudioEl.currentTime=0;} alarmAudioEl.muted=false; }).catch(()=>{alarmAudioEl.muted=false;}); }
+      if('speechSynthesis' in window){ const u=new SpeechSynthesisUtterance(' '); u.volume=0; u.lang='zh-TW'; speechSynthesis.speak(u); speechSynthesis.getVoices(); }
+    }catch(e){} removeEventListener('touchend',unlock,true); removeEventListener('click',unlock,true); }
+  addEventListener('touchend',unlock,true); addEventListener('click',unlock,true);
+})();
+</script>
+<style>
+#leftCol{display:flex;flex-direction:column;gap:16px;align-items:stretch;flex:0 0 auto}
+#panelWrap{display:flex;flex-direction:row-reverse;align-items:flex-start;gap:12px}
+#leftCol>.ext-box{flex:none;margin:0;width:auto}
+#bottomRow{flex:1 1 100%;width:100%;max-width:1100px;margin:0 auto}
+#bottomRow .ext-box{margin-bottom:12px}
+#rep119{margin-top:10px;display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 12px;background:#1a202c;border:2px solid #c53030;border-radius:8px;cursor:pointer;user-select:none;touch-action:manipulation;font-size:16px}
+#rep119.done{background:#742a2a}
+#rep119Txt{color:#f6e05e;font-size:14px}
+#phoneBox{width:96px;background:#e8e2c8;border:3px solid #8a7f5a;border-radius:10px;padding:8px;text-align:center;cursor:pointer;box-shadow:0 6px 14px rgba(0,0,0,.5);touch-action:manipulation;user-select:none;margin-top:60px}
+.ph-body{background:#c53030;border-radius:8px;padding:8px 4px;color:#fff}
+.ph-hand{font-size:40px;line-height:1}
+.ph-keys{font-weight:900;font-size:20px;letter-spacing:2px;background:#fff;color:#c53030;border-radius:4px;margin-top:4px}
+.ph-lbl{font-weight:900;color:#222;margin-top:6px;font-size:14px}
+#phStat{font-size:12px;color:#333;margin-top:4px;min-height:30px}
+#phoneBox.ring .ph-hand{animation:ring .15s infinite alternate}
+#phoneBox.done .ph-body{background:#2f855a}
+@keyframes ring{from{transform:rotate(-18deg)}to{transform:rotate(18deg)}}
+@media (max-width:820px){
+  #leftCol{display:block}
+  #panelWrap.show{display:flex!important;flex-direction:column;align-items:center}
+  #phoneBox{width:auto;min-width:220px;margin:12px auto 0;display:flex;align-items:center;gap:10px;order:2;padding:10px 14px;min-height:64px}
+  #panelWrap .cabinet{order:1}
+  .ph-lbl br{display:none}
+}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+  const pw=document.getElementById('panelWrap'), boxes=document.querySelectorAll('.ext-box');
+  const logBox=document.querySelector('.ext-box[data-sec="log"]'), ebBox=document.querySelector('.ext-box[data-sec="eb"]');
+  const L=document.createElement('div'); L.id='leftCol'; pw.parentNode.insertBefore(L,pw); L.appendChild(pw); L.appendChild(ebBox);
+  const B=document.createElement('div'); B.id='bottomRow'; document.body.appendChild(B);
+  B.appendChild(logBox); B.appendChild(document.getElementById('reportPanel'));
+  const w=document.querySelector('.ext-wrap'); if(w&&!w.children.length) w.remove();
+  // 移動 script 以外元素後，確保 bottomRow 在最後
+});
+function report119(){
+  const L=document.getElementById('rep119Led'), T=document.getElementById('rep119Txt'), B=document.getElementById('rep119');
+  L.className='eb-led on'; B.classList.add('done');
+  T.textContent='已報案119 '+new Date().toLocaleTimeString('zh-TW',{hour12:false});
+  call119();
+}
+</script>
+<style>
+#deskRow{display:flex;flex-wrap:nowrap;align-items:flex-start;gap:30px;flex:0 0 auto;margin:0 auto}
+#deskRow>*{flex:0 0 auto}
+#deskRow>.test-bench{margin:0}
+body{justify-content:center}
+@media (max-width:820px){ #deskRow{display:block;zoom:1!important} }
+</style>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+  const L=document.getElementById('leftCol'), T=document.querySelector('.test-bench');
+  const R=document.createElement('div'); R.id='deskRow'; L.parentNode.insertBefore(R,L); R.appendChild(L); R.appendChild(T);
+  const mq=matchMedia('(max-width:820px)');
+  function fitDesk(){ R.style.zoom=''; if(mq.matches) return;
+    const avail=document.documentElement.clientWidth-40, need=R.scrollWidth;
+    R.style.zoom= need>avail ? (avail/need).toFixed(3) : ''; }
+  addEventListener('resize',fitDesk); mq.addEventListener('change',fitDesk); fitDesk(); setTimeout(fitDesk,200);
+});
+</script>
+<style>
+.lt-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;background:rgba(0,0,0,.12);padding:6px 8px;border-radius:4px;font-size:12px;color:#111;font-weight:700}
+.lt-knob{width:44px;height:44px;border-radius:50%;background:radial-gradient(#555,#111);position:relative;cursor:pointer;border:2px solid #222;touch-action:manipulation}
+.lt-knob::after{content:'';position:absolute;left:50%;top:4px;width:4px;height:16px;margin-left:-2px;background:#f6e05e;border-radius:2px}
+.lt-sel{min-width:44px;min-height:32px;border:1px solid #333;border-radius:4px;background:#eee;font-weight:700;cursor:pointer}
+#ltVolt{background:#111;color:#48bb78;font-family:monospace;padding:4px 8px;border-radius:3px;min-width:56px;text-align:center}
+#ltPos{background:#fff;padding:3px 8px;border:1px solid #333;border-radius:3px;min-width:44px;text-align:center}
+#ltBox{margin-top:10px;border-top:1px solid #4a5568;padding-top:8px}
+#ltBox .test-btn{display:block;width:100%}
+.lt-mark{display:flex;gap:4px;margin:6px 0}.lt-mark button{flex:1;min-height:40px;border:none;border-radius:4px;background:#744210;color:#fff;font-weight:700;cursor:pointer}
+.lt-mark button.on{background:#d69e2e;color:#000}
+#ltInfo{font-size:12px;color:#f6e05e;margin:4px 0}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+  const $=id=>document.getElementById(id);
+  // 修正初始狀態（測試開關/電池測試在定位時視為正常）
+  switches.testMode=true; switches.battTest=true;
+  // 總機上新增 迴路選擇
+  const row=document.createElement('div'); row.className='lt-row';
+  row.innerHTML='迴路選擇 <button class="lt-sel" id="ltPrev">◀</button><div class="lt-knob" id="ltKnob" title="點擊旋轉"></div><button class="lt-sel" id="ltNext">▶</button><span id="ltPos">定位</span>　電壓 <span id="ltVolt">--</span><span style="font-weight:400">（測試開關：上=斷線試驗，下=動作試驗）</span>';
+  document.querySelector('.bottom-switches').appendChild(row);
+  // 控制器新增按鈕
+  const tb=document.querySelector('.test-bench'), box=document.createElement('div'); box.id='ltBox';
+  box.innerHTML=`<div class="test-title" style="font-size:14px">🔧 迴路測試練習</div>
+   <label style="color:#eee;font-size:13px"><input type="checkbox" id="ltHide" checked> 隨機隱藏一個斷線迴路</label>
+   <button class="test-btn" style="background:#2b6cb0" id="ltStart">開始迴路測試練習</button>
+   <div id="ltInfo">未開始</div>
+   <div style="color:#eee;font-size:12px">標記異常迴路：</div>
+   <div class="lt-mark">${[1,2,3,4,5].map(i=>`<button data-l="${i}">${i}L</button>`).join('')}</div>
+   <button class="test-btn" style="background:#2f855a" id="ltEnd">結束迴路測試並評估</button>`;
+  tb.appendChild(box);
+  let sel=0, lt=null, broken=0;
+  const tm=()=>lt?+((Date.now()-lt.start)/1000).toFixed(1):0;
+  function log(type,msg){ if(!lt) return; lt.log.push({t:tm(),type,msg});
+    $('logList').innerHTML=lt.log.map(e=>`<div>[${e.t.toFixed(1)}s] ${e.msg}</div>`).join(''); $('logList').scrollTop=1e6; }
+  const mode=()=>$('swTestMode').classList.contains('pos-up')?'break':'action';
+  function clearDisp(){ for(let i=1;i<=5;i++) $('loopLed'+i).className='led red'; }
+  function apply(){
+    $('ltKnob').style.transform=`rotate(${sel*50-125}deg)`; $('ltPos').textContent=sel?sel+'L':'定位';
+    const needle=$('meterNeedle');
+    if(!sel){ $('ltVolt').textContent='--'; needle.style.transform=''; if(!isTrouble) $('brokenLed').className='led yellow'; return; }
+    if(mode()==='break'){
+      const bad=sel===broken; $('ltVolt').textContent=bad?'0 V':'24 V'; $('ltVolt').style.color=bad?'#f56565':'#48bb78';
+      needle.style.transform=bad?'rotate(-38deg)':'rotate(20deg)';
+      $('brokenLed').className=bad?'led yellow on':(isTrouble?'led yellow on':'led yellow');
+      if(lt){ lt.br.add(sel); if(lt.repaired===sel) lt.recheck=true; log('break',`斷線試驗 ${sel}L → ${bad?'0V 斷線燈亮（異常）':'24V 正常'}`); }
+    } else {
+      $('ltVolt').textContent='--'; needle.style.transform='';
+      if(lt){ if(lt.pendingReset){ lt.noReset.push(sel); log('noreset',`⚠ 未復歸即切換至 ${sel}L`); showTip('小提醒：動作試驗每測完一個迴路，要先按「復歸」再切下一迴路');} lt.ac.add(sel); }
+      if(sel===broken){ if(lt) lt.actBrokenBefore=true; log('action',`動作試驗 ${sel}L → 無火災表示（迴路斷線）`); return; }
+      if(!activeLoops.includes(sel)) activeLoops.push(sel); isFire=true;
+      $('loopLed'+sel).className='led red on'; $('mainFireLed').className='fire-main-indicator on'; $('sigLed').className='led red on';
+      initAudio(); updateAudio(); if(lt){ lt.pendingReset=true; log('action',`動作試驗 ${sel}L → 火災燈、地區表示燈亮，音響鳴動`); }
+    }
+  }
+  function turn(d){ try{playKeyBeep();}catch(e){} sel=(sel+d+6)%6; if(lt&&!lt.firstSel) lt.firstSel=1; if(lt) log('sel','迴路選擇 → '+(sel?sel+'L':'定位')); apply(); }
+  $('ltKnob').onclick=()=>turn(1); $('ltNext').onclick=()=>turn(1); $('ltPrev').onclick=()=>turn(-1);
+  const names={mainSound:'主音響',areaDisp:'區示音響',areaSound:'地區音響',buzzer:'蜂鳴器',relay:'移報',acc:'蓄積',autoReset:'自復',testMode:'測試開關',battTest:'電池測試'};
+  const _ts=window.toggleSwitch; window.toggleSwitch=function(e,k){ _ts(e,k);
+    if(k==='testMode'){ if(lt){ log('mode','測試開關 → '+(mode()==='break'?'斷線試驗':'動作試驗')); if(mode()==='action'&&lt.firstAction==null) lt.firstAction=tm(); if(mode()==='break'&&lt.firstBreak==null) lt.firstBreak=tm(); } apply(); }
+    else if(lt) log('sw',`${names[k]} → ${e.classList.contains('pos-up')?'定位':'停止/測試'}`); };
+  const _tr=window.toggleReset; window.toggleReset=function(e){ _tr(e); if(lt){ log('reset','復歸'); lt.pendingReset=false; } };
+  const _tt=window.triggerTrouble; window.triggerTrouble=function(){ _tt(); if(lt&&isTrouble&&!broken){ broken=1+Math.floor(Math.random()*5); lt.origBroken=broken; log('sim','控制器模擬迴路斷線（迴路未知）'); } };
+  box.querySelectorAll('.lt-mark button').forEach(b=>b.onclick=()=>{ if(!lt) return alert('請先開始迴路測試練習'); const l=+b.dataset.l;
+    if(lt.marked.has(l)) return showTip(l+'L 已通報修復');
+    if(l===broken){ lt.marked.add(l); b.classList.add('on'); b.textContent=l+'L 修復中…';
+      log('mark',`標記異常迴路 ${l}L → 斷線已通報，派員修復中…`); showTip(`${l}L 斷線已通報，派員修復中…`);
+      setTimeout(()=>{ if(broken!==l) return; broken=0; if(isTrouble){ isTrouble=false; updateAudio(); }
+        b.textContent='✅'+l+'L'; if(lt){ lt.repairedAt=tm(); lt.repaired=l; log('repair',`✅ ${l}L 已修復（電壓恢復 24V）`); }
+        apply(); showTip(`✅ ${l}L 已修復！建議用斷線試驗再測一次 ${l}L 確認 24V，再進行動作試驗`); },2000);
+    } else { lt.wrong.add(l); log('mark_wrong',`標記 ${l}L 為異常（實際電壓正常）`); showTip(`${l}L 電壓正常，不是斷線迴路，請再確認`); } });
+  $('ltStart').onclick=()=>{ fullReset(); sel=0; broken=$('ltHide').checked?1+Math.floor(Math.random()*5):0;
+    lt={start:Date.now(),log:[],br:new Set(),ac:new Set(),marked:new Set(),wrong:new Set(),noReset:[],pendingReset:false,broken,origBroken:broken,actBrokenBefore:false,recheck:false};
+    box.querySelectorAll('.lt-mark button').forEach(b=>{b.classList.remove('on');b.textContent=b.dataset.l+'L';}); $('reportPanel').style.display='none';
+    $('ltInfo').textContent='● 迴路測試紀錄中'; log('start','開始迴路測試練習'+(broken?'（含隱藏斷線迴路）':'')); apply(); };
+  $('ltEnd').onclick=()=>{ if(!lt) return alert('請先開始迴路測試練習'); log('end','結束迴路測試'); const s=lt; lt=null; s.broken=s.origBroken;
+    $('ltInfo').textContent='未開始';  const g=[],b=[]; const all=[1,2,3,4,5];
+    const mb=all.filter(i=>!s.br.has(i)), ma=all.filter(i=>!s.ac.has(i));
+    if(!mb.length) g.push('斷線(導通)試驗：1L～5L 全部完成'); else {b.push(C('斷線試驗漏測了 '+mb.map(i=>i+'L').join('、'),'沒測到的迴路如果斷線，探測器動作時總機收不到火警訊號','測試開關切「斷線試驗」，迴路選擇依 1L→5L 每一迴路都切到，逐一看電壓表是否在正常範圍'));}
+    if(!ma.length) g.push('動作(火災表示)試驗：1L～5L 全部完成'); else {b.push(C('動作試驗漏測了 '+ma.map(i=>i+'L').join('、'),'無法確認該區火災燈、地區表示燈與音響是否正常','測試開關切「動作試驗」，每一迴路都要選到，確認燈號與音響後按復歸，再測下一迴路'));}
+    if(s.actBrokenBefore) b.push(C(`在 ${s.broken}L 還沒修復前就做了動作試驗`,'斷線迴路做動作試驗不會有反應，看不出火災表示是否正常','先完成斷線試驗、標記並修復斷線迴路，再做動作試驗'));
+    if(s.repaired){ if(s.recheck) g.push(`修復後有用斷線試驗再確認 ${s.repaired}L`); else b.push(C(`${s.repaired}L 修復後沒有再測一次`,'修復後要確認真的恢復正常','修復完成後，用斷線試驗再切到該迴路，確認電壓回到 24V')); if(s.ac.has(s.repaired)&&!s.actBrokenBefore) g.push(`修復後的 ${s.repaired}L 有完成動作試驗`); }
+    if(s.broken){ if(s.marked.has(s.broken)) g.push(`正確找出斷線迴路 ${s.broken}L 並通報修復`); else {b.push(C(`這次的斷線迴路是 ${s.broken}L，但沒有標記出來`,'斷線迴路在火災時不會發報，是最危險的缺失','斷線試驗時看到電壓 0V、斷線表示燈亮，就把該迴路標記為「異常迴路」，記錄下來並通報廠商修復'));} }
+    const wrong=[...s.wrong]; if(wrong.length){b.push(C('把正常的 '+wrong.map(i=>i+'L').join('、')+' 標成了異常','誤判會讓人去修沒壞的地方，真正的問題反而被忽略','以電壓表為準：約 24V 是正常，0V 加斷線燈亮才是斷線'));}
+    if(s.noReset.length){b.push(C('動作試驗時沒按復歸就切到 '+s.noReset.map(i=>i+'L').join('、'),'前一迴路的火災表示還亮著，會分不清下一個迴路到底有沒有動作','每測完一個迴路：確認燈號、音響 → 按「復歸」 → 再轉到下一迴路'));} else if(s.ac.size) g.push('動作試驗每個迴路之間均有復歸');
+    if(s.firstAction!=null && (s.firstBreak==null&&s.br.size===0 || s.br.size<5 && s.firstAction<(s.log.find(e=>e.type==='break')||{t:1e9}).t)){b.push(C('先做了動作試驗','迴路若有斷線，動作試驗會沒有反應，不容易判斷原因','先做斷線(導通)試驗確認迴路都完好，再做動作試驗'));}
+    const ord=[...new Set(s.log.filter(e=>e.type==='break').map(e=>+e.msg.match(/(\d)L/)[1]))]; if(ord.some((v,i)=>i&&v<ord[i-1])) b.push(C('測試順序有跳號','跳著測容易漏掉迴路','依 1L→2L→3L→4L→5L 順序逐一測試'));
+    const ab=Object.keys(names).filter(k=>{const id={mainSound:'swMainSound',areaDisp:'swAreaDisp',areaSound:'swAreaSound',buzzer:'swBuzzer',relay:'swRelay',acc:'swAcc',autoReset:'swAutoReset',testMode:'swTestMode',battTest:'swBattTest'}[k]; return !$(id).classList.contains('pos-up');});
+    if(sel) ab.push('迴路選擇');
+    if(ab.length){ b.unshift(C('⚠ 重要：結束時這些還沒回定位：'+ab.join('、'),'開關沒回定位，真的發生火災時總機可能不會正常警報或鳴動','測試完把迴路選擇轉回「定位」、測試開關及所有開關扳回「定位」，最後確認「注意開關燈」熄滅')); } else g.push('所有開關與迴路選擇均已回定位');
+    if(isFire){ b.push(C('結束時火災表示還亮著','總機停在火警狀態，無法監視新的火警','按「復歸」，確認火災燈、地區表示燈都熄滅')); }
+     s.result={g,b};
+    const rows=s.log.map(e=>`<tr><td>${e.t.toFixed(1)}</td><td>${e.msg}</td></tr>`).join('');
+    $('reportBody').innerHTML=`<p><b>【迴路測試練習】</b>　時間：${new Date(s.start).toLocaleString('zh-TW')}　斷線迴路：${s.broken?s.broken+'L':'無'}</p>
+    <h3>操作時間軸</h3><table><tr><th>秒數</th><th>操作</th></tr>${rows}</table>
+    <h3 class="good">✔ 做得好的</h3><ul>${g.map(x=>`<li>${x}</li>`).join('')||'<li>—</li>'}</ul>
+    <h3 class="bad">💡 教練提醒：正確做法</h3><ul>${b.map(x=>`<li style="margin-bottom:6px">${x.replace(/\n/g,'<br>')}</li>`).join('')||'<li>流程都正確，做得很好！</li>'}</ul>
+    <h3>標準程序（P型受信總機迴路測試）</h3><ol><li>斷線(導通)試驗：測試開關切至斷線試驗，迴路選擇依序切 1L～5L，確認電壓表在正常範圍；0V 或斷線燈亮即為斷線，記錄異常迴路</li><li>動作(火災表示)試驗：測試開關切至動作試驗，逐一選擇迴路，確認火災燈、地區表示燈亮及主音響／地區音響鳴動；每測完一個迴路按復歸</li><li>結束：迴路選擇回定位、測試開關及所有開關回定位，確認注意開關燈熄滅</li></ol>`;
+    window._lastReport=s; $('reportPanel').style.display='block'; $('reportPanel').scrollIntoView({behavior:'smooth'}); };
+});
+</script>
+<style>#tipToast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#2b6cb0;color:#fff;padding:12px 18px;border-radius:10px;font-size:15px;max-width:90vw;box-shadow:0 6px 20px rgba(0,0,0,.5);z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}#tipToast.show{opacity:1}</style>
+<script>
+function C(did,why,how){ return '你的操作：'+did+'\n為什麼重要：'+why+'\n✅ 正確做法：'+how; }
+function showTip(m){ let t=document.getElementById('tipToast'); if(!t){t=document.createElement('div');t.id='tipToast';document.body.appendChild(t);} t.textContent='💡 '+m; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),4000); }
+document.addEventListener('DOMContentLoaded',()=>{ setTimeout(()=>{
+  const _ts=window.toggleSwitch; window.toggleSwitch=function(e,k){ _ts(e,k); if(!isFire) return; const down=!e.classList.contains('pos-up');
+    if(down&&(k==='mainSound'||k==='areaSound')&&!document.querySelector('#ltInfo')?.textContent.includes('紀錄中')){
+      if(!window.__zoneConfirmed) showTip('小提醒：先確認地區表示燈（判明火警區域），再停止警報音響');
+      else if(!window.__sigDone) showTip('警報已停止，請對該區播放「火警訊號廣播」通知人員'); }
+    if(down&&k==='relay') showTip('小提醒：火災中移報開關要保持定位，才不會中斷移報');
+  };
+  const _tr=window.toggleReset; window.toggleReset=function(e){ const f=isFire; const lit=document.querySelector('#rep119Led.on'); _tr(e);
+    if(f && window.__verdict!=='false' && !document.querySelector('#ltInfo')?.textContent.includes('紀錄中')) showTip('小提醒：要先派員確認，確定誤報或火災排除後才復歸'); };
+},0); });
+</script>
+<style>
+#drillStat{text-align:center;min-height:0;margin-bottom:6px}
+#drillStat span{display:none;margin:2px 4px;padding:4px 10px;border-radius:6px;color:#fff;font-weight:900;font-size:15px;background:#2f855a;box-shadow:0 0 10px rgba(0,0,0,.3)}
+.zone-ok{outline:3px solid #38a169;box-shadow:0 0 12px #38a169;position:relative}
+.zone-ok::after{content:'✅已確認';position:absolute;left:50%;top:-10px;transform:translateX(-50%);font-size:10px;background:#38a169;color:#fff;padding:0 4px;border-radius:3px;white-space:nowrap}
+#dispBtn:disabled{opacity:.7}
+</style></head>
+<body>
+
+<!-- 受信總機本體 -->
+<div id="tabBar"><button data-t="panel" class="act">總機</button><button data-t="eb">緊急廣播</button><button data-t="ctrl">測試控制</button><button data-t="log">紀錄報告</button></div>
+<div id="panelWrap" class="sec" data-sec="panel"><div class="cabinet"><div id="drillStat"><span data-k="zone"></span><span data-k="verdict"></span></div>
+  <div class="cabinet-title-box">
+    <span class="cabinet-title">火警受信總機</span>
+  </div>
+
+  <div class="inner-panel">
+    <!-- 迴路盤 1L ~ 5L -->
+    <div class="loop-box">
+      <div class="loop-grid">
+        <div class="loop-item">
+          <div id="loopLed1" class="led red"></div>
+          <div class="loop-name">1 L</div>
+          <div class="loop-sub">火警</div>
+          <div class="loop-btn" onclick="triggerLoop(1)"></div>
+        </div>
+        <div class="loop-item">
+          <div id="loopLed2" class="led red"></div>
+          <div class="loop-name">2 L</div>
+          <div class="loop-sub">火警</div>
+          <div class="loop-btn" onclick="triggerLoop(2)"></div>
+        </div>
+        <div class="loop-item">
+          <div id="loopLed3" class="led red"></div>
+          <div class="loop-name">3 L</div>
+          <div class="loop-sub">火警</div>
+          <div class="loop-btn" onclick="triggerLoop(3)"></div>
+        </div>
+        <div class="loop-item">
+          <div id="loopLed4" class="led red"></div>
+          <div class="loop-name">4 L</div>
+          <div class="loop-sub">火警</div>
+          <div class="loop-btn" onclick="triggerLoop(4)"></div>
+        </div>
+        <div class="loop-item">
+          <div id="loopLed5" class="led red"></div>
+          <div class="loop-name">5 L</div>
+          <div class="loop-sub">火警</div>
+          <div class="loop-btn" onclick="triggerLoop(5)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 中間指示區 -->
+    <div class="middle-section">
+      <div class="m-col">
+        <div class="m-header">電壓指示</div>
+        <div class="meter">
+          <div class="meter-scale">0 12 24 30V</div>
+          <div id="meterNeedle" class="meter-needle"></div>
+        </div>
+      </div>
+      <div class="m-col">
+        <div class="m-header">火警燈</div>
+        <div id="mainFireLed" class="fire-main-indicator">火災</div>
+        <div class="m-header" style="margin-top:2px;">電源指示燈</div>
+        <div class="status-row"><span>交流電源燈</span><div id="acLed" class="led green on"></div></div>
+        <div class="status-row"><span>預備電源燈</span><div id="battLed" class="led yellow"></div></div>
+      </div>
+      <div class="m-col">
+        <div class="m-header">狀態指示燈</div>
+        <div class="status-list-grid">
+          <div class="status-row"><span>火警發信燈</span><div id="sigLed" class="led red"></div></div>
+          <div class="status-row"><span>消防栓水燈</span><div id="hydLed" class="led yellow"></div></div>
+          <div class="status-row"><span>蓄積表示燈</span><div id="accLed" class="led red"></div></div>
+          <div class="status-row"><span>泡沫啟動燈</span><div id="foamLed" class="led yellow"></div></div>
+          <div class="status-row"><span>注意開關燈</span><div id="swWarnLed" class="led red"></div></div>
+          <div class="status-row"><span>泡沫缺水燈</span><div id="foamWaterLed" class="led yellow"></div></div>
+          <div class="status-row"><span>斷線表示燈</span><div id="brokenLed" class="led yellow"></div></div>
+          <div class="status-row"><span>電話呼叫燈</span><div id="phoneLed" class="led red"></div></div>
+          <div class="status-row"><span>消防啟動燈</span><div id="pumpLed" class="led red"></div></div>
+          <div class="status-row"><span>地區電話</span><div style="width:7px;height:7px;border-radius:50%;background:#111;border:1px solid #777;"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 開關控制區 -->
+    <div class="bottom-switches">
+      <div class="switch-group-titles">
+        <div>主音響</div><div>區示音響</div><div>地區音響</div><div>蜂鳴器</div><div>移報</div><div>蓄積</div><div>自復</div><div>測試開關</div><div>電池測試</div><div>復歸</div>
+      </div>
+      <div class="switch-grid">
+        <div class="sw-unit">
+          <span>定位</span><div id="swMainSound" class="rocker pos-up" onclick="toggleSwitch(this, 'mainSound')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swAreaDisp" class="rocker pos-up" onclick="toggleSwitch(this, 'areaDisp')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swAreaSound" class="rocker pos-up" onclick="toggleSwitch(this, 'areaSound')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swBuzzer" class="rocker pos-up" onclick="toggleSwitch(this, 'buzzer')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swRelay" class="rocker pos-up" onclick="toggleSwitch(this, 'relay')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swAcc" class="rocker pos-up" onclick="toggleSwitch(this, 'acc')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swAutoReset" class="rocker pos-up" onclick="toggleSwitch(this, 'autoReset')"><div class="rocker-lever"></div></div><span>停止</span>
+        </div>
+        <div class="sw-unit">
+          <span>斷線/動作</span><div id="swTestMode" class="rocker pos-up" onclick="toggleSwitch(this, 'testMode')"><div class="rocker-lever"></div></div><span>動作測試</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swBattTest" class="rocker pos-up" onclick="toggleSwitch(this, 'battTest')"><div class="rocker-lever"></div></div><span>測試</span>
+        </div>
+        <div class="sw-unit">
+          <span>定位</span><div id="swReset" class="rocker pos-up" onclick="toggleReset(this)"><div class="rocker-lever"></div></div><span>復歸</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+<!-- 演練操作盒 -->
+<div class="test-bench sec" data-sec="ctrl">
+  <div class="test-title">🚨 火警測試控制器</div>
+  <button class="test-btn fire" onclick="triggerLoop(1)">觸發 1L 探測器火警</button>
+  <button class="test-btn fire" onclick="triggerLoop(2)">觸發 2L 探測器火警</button>
+  <button class="test-btn fire" onclick="triggerLoop(3)">觸發 3L 探測器火警</button>
+  <button class="test-btn fire" onclick="triggerLoop(4)">觸發 4L 探測器火警</button>
+  <button class="test-btn fire" onclick="triggerLoop(5)">觸發 5L 探測器火警</button>
+  <button class="test-btn trouble" onclick="triggerTrouble()">迴路斷線模擬 (Fault)</button>
+  <button class="test-btn" style="background:#4a5568;" onclick="fullReset()">總機強制重置</button>
+</div>
+
+<script>
+  let audioCtx = null;
+  let alarmOsc = null, alarmGain = null, lfoOsc = null;
+  let troubleOsc = null, troubleGain = null;
+
+  // 狀態變數
+  let isFire = false;
+  let isTrouble = false;
+  let activeLoops = [];
+  let switches = {
+    mainSound: true,
+    areaDisp: true,
+    areaSound: true,
+    buzzer: true,
+    relay: true,
+    acc: true,
+    autoReset: true,
+    testMode: false,
+    battTest: false
+  };
+
+  // ===== 警報音（可替換）=====
+  // 改用音檔：把路徑或 base64 (data:audio/mp3;base64,...) 填入 ALARM_AUDIO_SRC；留空則用原合成音
+  const ALARM_AUDIO_SRC = 'alarm.mp3';
+  let alarmAudioEl = null;
+  function playAlarm() {
+    if (ALARM_AUDIO_SRC) {
+      if (!alarmAudioEl) { alarmAudioEl = new Audio(ALARM_AUDIO_SRC); alarmAudioEl.loop = true; }
+      if (alarmAudioEl.paused) alarmAudioEl.play().catch(()=>{});
+      return;
+    }
+    initAudio();
+    if (alarmOsc) return;
+    alarmOsc = audioCtx.createOscillator();
+    alarmGain = audioCtx.createGain();
+    alarmOsc.type = 'sawtooth';
+    alarmOsc.frequency.setValueAtTime(750, audioCtx.currentTime);
+    lfoOsc = audioCtx.createOscillator();
+    lfoOsc.frequency.value = 6;
+    const lfoG = audioCtx.createGain();
+    lfoG.gain.value = 220;
+    lfoOsc.connect(lfoG);
+    lfoG.connect(alarmOsc.frequency);
+    lfoOsc.start();
+    alarmGain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+    alarmOsc.connect(alarmGain);
+    alarmGain.connect(audioCtx.destination);
+    alarmOsc.start();
+  }
+  function stopAlarm() {
+    if (alarmAudioEl) { alarmAudioEl.pause(); alarmAudioEl.currentTime = 0; }
+    if (alarmOsc) { alarmOsc.stop(); alarmOsc.disconnect(); lfoOsc.stop(); alarmOsc = null; }
+  }
+
+  function initAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  function playKeyBeep() {
+    initAudio();
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1000, audioCtx.currentTime);
+    g.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.06);
+    osc.connect(g);
+    g.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.06);
+  }
+
+  function updateAudio() {
+    if (!audioCtx && !ALARM_AUDIO_SRC) return;
+    initAudio();
+    const shouldAlarm = isFire && (switches.mainSound || switches.areaSound);
+
+    if (shouldAlarm) playAlarm(); else stopAlarm();
+
+    // 斷線逼逼聲
+    const shouldTrouble = isTrouble && switches.buzzer;
+    if (shouldTrouble && !troubleOsc) {
+      troubleOsc = audioCtx.createOscillator();
+      troubleGain = audioCtx.createGain();
+      troubleOsc.type = 'sine';
+      troubleOsc.frequency.setValueAtTime(2000, audioCtx.currentTime);
+      troubleGain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+      troubleOsc.connect(troubleGain);
+      troubleGain.connect(audioCtx.destination);
+      troubleOsc.start();
+    } else if (!shouldTrouble && troubleOsc) {
+      troubleOsc.stop();
+      troubleOsc.disconnect();
+      troubleOsc = null;
+    }
+  }
+
+  function triggerLoop(n) {
+    playKeyBeep();
+    if (!activeLoops.includes(n)) activeLoops.push(n);
+    isFire = true;
+    document.getElementById(`loopLed${n}`).className = 'led red on';
+    document.getElementById('mainFireLed').className = 'fire-main-indicator on';
+    document.getElementById('sigLed').className = 'led red on';
+    updateAudio();
+  }
+
+  function triggerTrouble() {
+    playKeyBeep();
+    isTrouble = !isTrouble;
+    document.getElementById('brokenLed').className = isTrouble ? 'led yellow on' : 'led yellow';
+    updateAudio();
+  }
+
+  function checkWarningLed() {
+    // 只要有任何開關切離正常定位，「注意開關燈」即恆亮
+    const isAbnormal = Object.values(switches).some(v => v === false);
+    document.getElementById('swWarnLed').className = isAbnormal ? 'led red on' : 'led red';
+  }
+
+  function toggleSwitch(el, key) {
+    playKeyBeep();
+    const isUp = el.classList.contains('pos-up');
+    el.classList.toggle('pos-up', !isUp);
+    el.classList.toggle('pos-down', isUp);
+    switches[key] = !isUp;
+
+    // 電池測試功能連動指針
+    if (key === 'battTest') {
+      const needle = document.getElementById('meterNeedle');
+      needle.style.transform = isUp ? 'rotate(32deg)' : 'rotate(20deg)';
+    }
+
+    checkWarningLed();
+    updateAudio();
+  }
+
+  function toggleReset(el) {
+    playKeyBeep();
+    el.classList.remove('pos-up');
+    el.classList.add('pos-down');
+    
+    setTimeout(() => {
+      el.classList.remove('pos-down');
+      el.classList.add('pos-up');
+      fullReset();
+    }, 300);
+  }
+
+  function fullReset() {
+    if(window.setDrill){ setDrill('zone',''); document.querySelectorAll('.zone-ok').forEach(e=>e.classList.remove('zone-ok')); }
+    isFire = false;
+    isTrouble = false;
+    activeLoops = [];
+    document.getElementById('mainFireLed').className = 'fire-main-indicator';
+    document.getElementById('sigLed').className = 'led red';
+    document.getElementById('brokenLed').className = 'led yellow';
+    for (let i = 1; i <= 5; i++) {
+      document.getElementById(`loopLed${i}`).className = 'led red';
+    }
+    updateAudio();
+  }
+</script>
+<style>
+.ext-wrap{max-width:1100px;margin:16px auto;display:flex;flex-wrap:wrap;gap:16px;font-family:inherit}
+.ext-box{flex:1 1 480px;background:#2d3748;color:#eee;border:3px solid #1a202c;border-radius:10px;padding:14px}
+.ext-box h3{margin:0 0 10px;font-size:18px}
+.ext-btn{margin:4px;padding:8px 12px;border:none;border-radius:6px;background:#4a5568;color:#fff;cursor:pointer;font-size:14px}
+.ext-btn:hover{filter:brightness(1.2)} .ext-btn.red{background:#c53030}.ext-btn.green{background:#2f855a}.ext-btn.blue{background:#2b6cb0}.ext-btn.on{outline:3px solid #f6e05e}
+.eb-led{display:inline-block;width:14px;height:14px;border-radius:50%;background:#444;vertical-align:middle;margin-right:6px;border:1px solid #000}
+.eb-led.on{background:#f56565;box-shadow:0 0 10px #f56565}.eb-led.g.on{background:#48bb78;box-shadow:0 0 10px #48bb78}
+.eb-zone{display:inline-flex;align-items:center;gap:4px;background:#1a202c;padding:6px 8px;border-radius:6px;margin:3px;cursor:pointer;user-select:none}
+#sessInfo{font-size:14px;margin:6px 0;color:#f6e05e}
+#logList{max-height:160px;overflow:auto;font-size:13px;background:#1a202c;padding:6px;border-radius:6px}
+#reportPanel{display:none;max-width:1100px;margin:16px auto;background:#fff;color:#222;padding:20px;border-radius:10px;border:3px solid #2b6cb0}
+#reportPanel table{border-collapse:collapse;width:100%;font-size:14px}#reportPanel td,#reportPanel th{border:1px solid #999;padding:4px 8px}
+.good{color:#2f855a}.bad{color:#c53030}
+.zone-click{cursor:pointer}
+@media print{body>*:not(#reportPanel){display:none!important}#reportPanel{display:block!important;border:none}.noprint{display:none}}
+</style>
+<div class="ext-wrap">
+  <div class="ext-box sec" data-sec="log">
+    <h3>📋 演練操作紀錄</h3>
+    <div id="sessInfo">待命中（觸發火警後自動開始紀錄）</div>
+    <div>
+      <button class="ext-btn blue" id="dispBtn" onclick="dispatchCheck()">🧑‍🚒 派員現場確認</button>
+      
+      <button class="ext-btn green" id="endBtn" onclick="endBtnClick()">🏁 結束演練並評估</button>
+    </div>
+    <div style="font-size:12px;color:#cbd5e0;margin:4px 0">提示：點擊總機上的地區表示燈（1L～5L）即視為「確認火警區域」。</div>
+    <div id="logList"></div>
+  </div>
+  <div class="ext-box sec" data-sec="eb">
+    <h3>📢 緊急廣播設備</h3>
+    <div><span id="ebPowerLed" class="eb-led g"></span>電源　<button class="ext-btn" onclick="ebPower()">電源 ON/OFF</button>
+      <span id="ebActLed" class="eb-led"></span>緊急廣播啟動燈</div>
+    <div style="margin:6px 0">區域選擇：<span id="ebZones"></span>
+      <button class="ext-btn" id="ebAllBtn" onclick="ebAll()">全區廣播</button></div>
+    <div>
+      <button class="ext-btn" style="background:#b7791f" onclick="ebPlay('signal')">📣 火警訊號廣播</button>
+      <button class="ext-btn red" onclick="ebPlay('evac')">🔥 火災疏散廣播</button>
+      <button class="ext-btn green" onclick="ebPlay('clear')">✅ 解除廣播</button>
+      <button class="ext-btn blue" id="ebMicBtn" onclick="ebMic()">🎙️ 麥克風手動廣播</button>
+      <button class="ext-btn" onclick="ebStop()">⏹ 停止廣播</button>
+    </div>
+    <div id="ebStatus" style="font-size:13px;margin-top:6px;color:#cbd5e0">待機</div>
+    <div id="rep119" onclick="report119()" title="按下表示已報案119"><span id="rep119Led" class="eb-led"></span><b>119 報案</b><span id="rep119Txt">未報案</span></div>
+  </div>
+</div>
+<div id="reportPanel" class="sec" data-sec="log">
+  <h2>🧾 火警受信總機操作練習回饋</h2>
+  <div id="reportBody"></div>
+  <div class="noprint" style="margin-top:12px">
+    <button class="ext-btn blue" onclick="exportReport()">⬇ 下載報告 (TXT)</button>
+    <button class="ext-btn" onclick="window.print()">🖨 列印</button>
+    <button class="ext-btn" onclick="document.getElementById('reportPanel').style.display='none'">關閉</button>
+  </div>
+</div>
+<script>
+(function(){
+  let sess=null;
+  const el=id=>document.getElementById(id);
+  const t=()=>sess?((Date.now()-sess.start)/1000).toFixed(1):'-';
+  function log(type,msg){ if(!sess) return; sess.log.push({t:+t(),type,msg});
+    if(!(type in sess.first)) sess.first[type]=+t();
+    el('logList').innerHTML=sess.log.map(e=>`<div>[${e.t.toFixed(1)}s] ${e.msg}</div>`).join(''); el('logList').scrollTop=1e6; }
+  window.simLog=log;
+  function startSess(n){ resetDrillUI(); sess={start:Date.now(),log:[],first:{},zones:[n],verdict:null,trouble:isTrouble};
+    el('reportPanel').style.display='none'; el('sessInfo').textContent='● 紀錄中（火警發生於 '+n+'L）'; log('alarm',`${n}L 探測器動作，火警發報`); }
+  const names={mainSound:'主音響',areaDisp:'地區表示',areaSound:'地區音響',buzzer:'蜂鳴器',relay:'移報',acc:'蓄積',autoReset:'自動復歸',testMode:'測試模式',battTest:'預備電源測試'};
+  const _tl=window.triggerLoop; window.triggerLoop=function(n){ if(!sess){ window.__verdict=null; window.__zoneConfirmed=false; window.__sigDone=false; startSess(n);} else {sess.zones.push(n); log('alarm2',`${n}L 另一迴路火警發報`);} _tl(n); ebLinkFire(); };
+  const _ts=window.toggleSwitch; window.toggleSwitch=function(e,k){ _ts(e,k); log('sw_'+k+(switches[k]?'_on':'_off'),`${names[k]||k}開關 → ${switches[k]?'定位':(k==='testMode'?'動作測試':k==='battTest'?'測試':'停止')}`);  if(sess&&sess.afterReset&&!Object.values(switches).some(v=>!v)) setTimeout(()=>sess&&endSession('復歸並全部回定位'),200); };
+  const _tt=window.triggerTrouble; window.triggerTrouble=function(){ _tt(); if(sess){ sess.trouble=sess.trouble||isTrouble; log('trouble',isTrouble?'迴路斷線故障發生':'斷線故障解除'); } };
+  const _tr=window.toggleReset; window.toggleReset=function(e){ const had=sess; if(had){ log('reset','按下復歸'); } _tr(e); if(had) setTimeout(()=>{ if(!sess) return; sess.afterReset=true; const ab=Object.keys(switches).filter(k=>!switches[k]); if(!ab.length) endSession('復歸'); else { el('sessInfo').textContent='● 已復歸：請把所有開關回定位（全部回定位後自動評估）'; showTip('已復歸，請把所有開關扳回「定位」，完成後自動評估'); } },350); };
+  // 地區表示燈點擊 = 確認區域
+  for(let i=1;i<=5;i++){ const l=el('loopLed'+i); if(!l) continue; const p=l.parentElement; p.classList.add('zone-click'); p.title='點擊確認此區域';
+    p.addEventListener('click',()=>{ if(!sess) return; const ok=activeLoops.includes(i); if(ok){ window.__zoneConfirmed=true; p.classList.add('zone-ok'); setDrill('zone',`✅ 已確認火災區域：${i}L`); showTip(`✅ 已確認火災區域：${i}L`);} else showTip(`${i}L 並未發報，請再確認`); log(ok?'confirm':'confirm_wrong',`確認地區表示燈 ${i}L ${ok?'（正確：該區火警）':'（該區無火警）'}`); }); }
+  window.dispatchCheck=function(){ if(!sess) return alert('目前無火警演練'); if(sess.dispatching||sess.verdict) return showTip('已派員，'+(sess.verdict?'現場已回報':'請等候現場回報'));
+    sess.dispatching=true; log('dispatch','派員前往現場確認…'); setDrill('verdict','🧑‍🚒 派員前往現場確認中…','#2b6cb0'); showTip('派員前往現場確認中…');
+    const btn=el('dispBtn'); btn.disabled=true; btn.textContent='🧑‍🚒 派員確認中…'; const me=sess;
+    setTimeout(()=>{ if(sess!==me) return; const real=Math.random()<0.5; sess.verdict=real?'real':'false'; window.__verdict=sess.verdict;
+      const msg=real?'🔥 現場回報：確認發生火災':'✅ 現場回報：確認為誤報';
+      log('verdict',msg.slice(2)); setDrill('verdict',msg,real?'#c53030':'#2f855a'); showTip(msg); btn.textContent='🧑‍🚒 已派員（'+(real?'火災':'誤報')+'）';
+      if(real) el('endBtn').textContent='🏃 全體人員疏散至安全處所，結束演練'; },2500); };
+  window.endBtnClick=function(){ if(sess&&sess.verdict==='real'){ log('evac_done','全體人員疏散至安全處所'); endSession('全體人員疏散至安全處所'); } else endSession('手動結束'); };
+  window.setDrill=function(k,txt,col){ const d=el('drillStat'); if(!d) return; const sp=d.querySelector('[data-k="'+k+'"]'); sp.textContent=txt; sp.style.display=txt?'inline-block':'none'; if(col) sp.style.background=col; };
+  function resetDrillUI(){ setDrill('zone',''); setDrill('verdict',''); document.querySelectorAll('.zone-ok').forEach(e=>e.classList.remove('zone-ok'));
+    const btn=el('dispBtn'); btn.disabled=false; btn.textContent='🧑‍🚒 派員現場確認'; el('endBtn').textContent='🏁 結束演練並評估'; }
+  window.resetDrillUI=resetDrillUI;
+  window.call119=function(){ if(sess) log('call119','119 報案'); };
+  // ===== 緊急廣播 =====
+  const eb={power:true,zones:[true,true,true,true,true],mic:false};
+  const msgs={signal:'我們剛收到火災訊號的警報，已派員前往查看，請不要驚慌，確切狀況會再立即通報。',
+    evac:'經現場確認發生火災，請大家依照指示保持冷靜、往安全方向疏散，請勿搭乘電梯。',
+    clear:'剛才的火災警報經現場確認為誤報，請大家安心，恢復正常作業。'};
+  const zn={signal:'火警訊號廣播',evac:'火災疏散廣播',clear:'解除廣播'};
+  function renderEb(){ el('ebPowerLed').className='eb-led g'+(eb.power?' on':'');
+    el('ebZones').innerHTML=eb.zones.map((z,i)=>`<span class="eb-zone" onclick="ebZone(${i})"><span class="eb-led${z?' on':''}"></span>${i+1}F/${i+1}L</span>`).join('');
+    el('ebAllBtn').classList.toggle('on',eb.zones.every(z=>z)); el('ebMicBtn').classList.toggle('on',eb.mic); }
+  function sel(){ return eb.zones.map((z,i)=>z?(i+1)+'L':null).filter(Boolean); }
+  window.ebPower=function(){ eb.power=!eb.power; if(!eb.power) ebStop(); log('eb_power','緊急廣播電源 '+(eb.power?'ON':'OFF')); renderEb(); };
+  window.ebZone=function(i){ eb.zones[i]=!eb.zones[i]; log('eb_zone',`廣播區域 ${i+1}L ${eb.zones[i]?'選取':'取消'}`); renderEb(); };
+  window.ebAll=function(){ eb.zones=eb.zones.map(()=>true); log('eb_all','選擇全區廣播'); renderEb(); };
+  window.ebPlay=function(k){ if(!eb.power) return alert('緊急廣播電源未開啟'); const z=sel(); if(!z.length) return alert('請先選擇廣播區域');
+    el('ebActLed').className='eb-led on'; el('ebStatus').textContent=`播放「${zn[k]}」→ ${z.join('、')}`; log('eb_'+k,`緊急廣播：${zn[k]}（${z.join('、')}）`); if(sess){ sess.eb=sess.eb||[]; sess.eb.push({k,t:+t(),z:z.map(x=>+x[0]),pre:!sess.verdict}); if(k==='signal') window.__sigDone=true; if((k==='fire'||k==='evac')&&!sess.verdict) showTip('小提醒：現場還沒確認，先用「火警訊號廣播」安撫，確認火災後再播火災疏散廣播'); }
+    if('speechSynthesis' in window){ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(msgs[k]); u.lang='zh-TW'; u.rate=0.95;
+      const v=speechSynthesis.getVoices().find(v=>/zh[-_]TW/i.test(v.lang)); if(v) u.voice=v;
+      u.onend=()=>{ if(!eb.mic){ el('ebActLed').className='eb-led'; el('ebStatus').textContent='播放完畢'; } }; speechSynthesis.speak(u); } };
+  window.ebMic=function(){ if(!eb.power) return alert('緊急廣播電源未開啟'); eb.mic=!eb.mic; el('ebActLed').className='eb-led'+(eb.mic?' on':'');
+    el('ebStatus').textContent=eb.mic?`🎙️ 麥克風廣播中 → ${sel().join('、')}（模擬）`:'麥克風廣播結束'; log('eb_mic',eb.mic?'麥克風手動廣播開始':'麥克風手動廣播結束'); if(sess&&eb.mic){ sess.eb=sess.eb||[]; sess.eb.push({k:'mic',t:+t(),z:sel().map(x=>+x[0]),pre:!sess.verdict}); } renderEb(); };
+  window.ebStop=function(){ if('speechSynthesis' in window) speechSynthesis.cancel(); eb.mic=false; el('ebActLed').className='eb-led'; el('ebStatus').textContent='待機'; renderEb(); };
+  function ebLinkFire(){ el('ebStatus').textContent='⚠ 火警連動：緊急廣播待命，請確認後選擇廣播'; }
+  renderEb();
+  // ===== 評估 =====
+  window.endSession=function(why){ if(!sess) return alert('目前無進行中的演練'); log('end','演練結束（'+why+'）'); const s=sess; sess=null;
+    el('sessInfo').textContent='待命中（觸發火警後自動開始紀錄）';
+    const f=s.first, g=[], b=[]; 
+    const first=k=>Object.keys(f).filter(x=>x.startsWith(k)).map(x=>f[x]).sort((a,b)=>a-b)[0];
+    const conf=f.confirm, ms=f.sw_mainSound_off, as=f.sw_areaSound_off, disp=f.dispatch, ver=s.verdict, vt=f.verdict, rst=f.reset, c119=f.call119;
+    const zones=[...new Set(s.zones)], ebs=s.eb||[], zl=a=>a.map(x=>x+'L').join('、'), cover=e=>zones.every(z=>e.z.includes(z));
+    const stops=[ms,as].filter(x=>x!=null), stopT=stops.length?Math.min(...stops):null;
+    const SIG='「我們剛收到火災訊號的警報，已派員前往查看，請不要驚慌，確切狀況會再立即通報。」';
+    // 1 確認區域
+    if(conf!=null){ g.push(`於 ${conf}s 確認地區表示燈，判明火警區域 ${zl(zones)}`); if(conf>60) b.push(C(`警報後 ${conf} 秒才確認火警區域`,'越早判明區域，越早能廣播、派員','警報一響，通報班先到受信總機看亮起的地區表示燈'));}
+    else b.push(C('沒有確認地區表示燈','不知道哪一區發報，就無法對該區廣播與派員','警報一響，先看亮起的地區表示燈（點擊該燈）判明火警區域'));
+    if(f.confirm_wrong!=null) b.push(C('確認到沒有火警的區域','廣播與派員會跑錯地方','看清楚亮著的地區表示燈，再確認該區'));
+    // 2 停止警報
+    if(stopT!=null){ if(conf==null||stopT<conf) b.push(C('還沒確認地區表示燈就停止了警報音響','警報的作用是告訴自衛編組有火警訊號，區域還沒判明就停，容易漏掉資訊','先確認地區表示燈、判明火警區域，再停止警報音響')); else g.push(`確認區域後於 ${stopT}s 停止警報音響`); }
+    else b.push(C('警報音響一直沒有停止','警報持續鳴動會蓋過緊急廣播，人員聽不到說明','確認火警區域後，停止主音響與地區音響，改用緊急廣播說明狀況'));
+    // 3 火警訊號廣播
+    const sig=ebs.find(e=>(e.k==='signal'||e.k==='mic')&&e.pre);
+    if(sig){ g.push(`於 ${sig.t}s 對 ${zl(sig.z)} 發火警訊號廣播`); if(stopT!=null&&sig.t-stopT>30) b.push(C(`停止警報後 ${(sig.t-stopT).toFixed(0)} 秒才廣播`,'警報停了卻沒有說明，人員會不知所措','停止警報後立即對該區播放火警訊號廣播：'+SIG));
+      if(!cover(sig)) b.push(C(`火警訊號廣播的區域（${zl(sig.z)}）沒有涵蓋火警區域 ${zl(zones)}`,'該區人員最需要知道狀況','廣播區域選擇火警區域（或全區）再播放')); }
+    else b.push(C('沒有發「火警訊號廣播」','人員聽到警報（或警報停了）卻不知道狀況，容易驚慌','停止警報後，選擇火警區域播放「火警訊號廣播」：'+SIG));
+    const early=ebs.find(e=>(e.k==='fire'||e.k==='evac')&&e.pre);
+    if(early) b.push(C('現場還沒確認就播了火災疏散廣播','若是誤報，會造成不必要的恐慌與疏散','先用火警訊號廣播安撫，確認是火災後再發火災疏散廣播'));
+    // 4 派員 / 119
+    if(disp!=null){ g.push(`於 ${disp}s 派員現場確認`); if(disp>60) b.push(C(`警報後 ${disp} 秒才派員`,'初期火災擴大很快','確認區域後，立刻派員攜帶滅火器、電話到現場'));}
+    else b.push(C('沒有派員去現場確認','無法分辨真實火災還是誤報','按「派員現場確認」，派員攜帶滅火器、電話到現場'));
+    if(ver==='real'){
+      const ev=ebs.find(e=>(e.k==='fire'||e.k==='evac'||e.k==='mic')&&!e.pre);
+      if(ev){ g.push(`確認火災後於 ${ev.t}s 發火災疏散廣播（${zl(ev.z)}）`); if(!cover(ev)) b.push(C(`疏散廣播區域（${zl(ev.z)}）沒有涵蓋火警區域 ${zl(zones)}`,'起火區人員最需要疏散','確認火災後選擇火警區域，必要時選「全區廣播」'));}
+      else b.push(C('確認是火災，卻沒有發火災疏散廣播','人員不知道要疏散，可能造成傷亡','播放「火災疏散廣播」：「經現場確認發生火災，請大家依照指示保持冷靜、往安全方向疏散。」'));
+      if(c119==null) b.push(C('真實火災卻沒有通報 119','消防隊越早出動，損害越小','派員的同時或確認火災後立即按「119 報案」'));
+      else if((ev&&c119>ev.t)||(vt!=null&&c119>vt+60)) b.push(C(`119 在第 ${c119} 秒才通報，太晚了`,'119 延後，消防隊抵達就會延後','119 與派員順序不拘，但最晚要在確認火災後立即通報，不要等疏散廣播後或最後才報'));
+      else g.push(`於 ${c119}s 通報 119（時機適當）`);
+      if(f.sw_relay_off!=null) b.push(C('火災中把移報開關扳到停止','會中斷對防災中心／消防機關的移報','火災中移報開關保持「定位」'));
+      if(rst!=null) b.push(C('真實火災還沒排除就按了復歸','復歸後總機回到監視狀態，現場狀況可能還在擴大','等火災排除、探測器恢復正常後才復歸，再把所有開關回定位'));
+    } else if(ver==='false'){
+      g.push('現場確認為誤報');
+      const cl=ebs.find(e=>e.k==='clear'&&!e.pre);
+      if(cl) g.push(`於 ${cl.t}s 播放解除廣播`); else b.push(C('確認是誤報，但沒有播放解除廣播','人員還在等通知，會持續緊張或停止作業','播放「解除廣播」告知大家，再排除誤報原因'));
+    } else b.push(C('還沒取得現場確認結果就結束','不知道是真火災還是誤報，後續處置無法判斷','先派員現場確認，依結果廣播後再結束'));
+    if(rst!=null && (vt==null || rst<vt)) b.push(C('還沒完成現場確認就按了復歸','若是真實火災，總機就失去火警顯示','先派員確認；確定誤報原因排除或火災撲滅後才復歸'));
+    else if(rst!=null && ver==='false') g.push('確認誤報後才復歸');
+    if(rst!=null){ const ab=Object.keys(switches).filter(k=>k!=='testMode'&&k!=='battTest'&&!switches[k]);
+      if(ab.length) {b.push(C('復歸後這些開關還沒回定位：'+ab.map(k=>names[k]).join('、'),'下次火警時這些功能不會正常動作，注意開關燈會一直亮','復歸後把所有開關扳回「定位」，確認注意開關燈熄滅'));} }
+    if(s.trouble){ if(f.sw_buzzer_off!=null) g.push('斷線故障時有停止蜂鳴器'); b.push(C('這次有發生斷線故障','斷線迴路在火災時無法發報','記錄故障迴路、通知廠商檢修，修復前加強該區巡查，不要長期把開關放在停止')); }
+    
+    s.result={g,b};
+    const rows=s.log.map(e=>`<tr><td>${e.t.toFixed(1)}</td><td>${e.msg}</td></tr>`).join('');
+    el('reportBody').innerHTML=`<p>演練時間：${new Date(s.start).toLocaleString('zh-TW')}　火警區域：${[...new Set(s.zones)].map(z=>z+'L').join('、')}　現場結果：${ver==='real'?'真實火災':ver==='false'?'誤報':'未確認'}</p>
+    <h3>操作時間軸</h3><table><tr><th>秒數(自警報)</th><th>操作</th></tr>${rows}</table>
+    <h3 class="good">✔ 做得好的</h3><ul>${g.map(x=>`<li>${x}</li>`).join('')||'<li>—</li>'}</ul>
+    <h3 class="bad">💡 教練提醒：正確做法</h3><ul>${b.map(x=>`<li style="margin-bottom:6px">${x.replace(/\n/g,'<br>')}</li>`).join('')||'<li>流程都正確，做得很好！</li>'}</ul>
+    <h3>標準處置流程（P型受信總機）</h3><ol><li>確認地區表示燈，判明火警區域</li><li>停止警報音響（主音響、地區音響）</li><li>對該區發「火警訊號廣播」：「我們剛收到火災訊號的警報，已派員前往查看，請不要驚慌，確切狀況會再立即通報。」</li><li>派員攜帶滅火器、電話至現場確認；通報119（與派員順序不拘，但不可延後）</li><li>確認火災：發火災疏散廣播，指示人員依指示疏散，並進行初期滅火</li><li>誤報：播放解除廣播，排除誤報原因</li><li>火災排除／探測器恢復後才復歸，所有開關回定位（注意開關燈熄滅）</li></ol>`;
+    window._lastReport=s; el('reportPanel').style.display='block'; el('reportPanel').scrollIntoView({behavior:'smooth'}); };
+  window.exportReport=function(){ const s=window._lastReport; if(!s) return;
+    const txt=['火警受信總機操作練習回饋','演練時間：'+new Date(s.start).toLocaleString('zh-TW'),'','【操作時間軸】',...s.log.map(e=>`[${e.t.toFixed(1)}s] ${e.msg}`),'','【做得好的】',...s.result.g.map(x=>'・'+x.replace(/\n/g,'\n   ')),'','【教練提醒：正確做法】',...s.result.b.map(x=>'・'+x.replace(/\n/g,'\n   '))].join('\n');
+    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+txt],{type:'text/plain;charset=utf-8'})); a.download='演練報告_'+Date.now()+'.txt'; a.click(); };
+})();
+</script>
+
+</body>
+</html>

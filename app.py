@@ -17,7 +17,13 @@ from pathlib import Path
 import streamlit as st
 from utils import data_loader as dl
 from utils import db
+from utils.fire_panel import PAGE_SCRIPT, query_requests_fire_panel
 from utils.helpers import score_from_answers
+
+# QR / 短網址：/?page=fire-panel 進受信總機（公開頁，不經講師密碼）。
+# 必須在 set_page_config 之前轉走，模擬器頁才能用自己的寬版設定。
+if query_requests_fire_panel():
+    st.switch_page(PAGE_SCRIPT)
 
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Regular.ttf"
 FONT_BOLD_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Bold.ttf"
