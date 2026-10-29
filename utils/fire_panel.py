@@ -161,8 +161,8 @@ def render_fire_panel(
         True 時讓 iframe 盡量佔滿視窗，內容超出時在 iframe 裡捲動。
         給獨立的模擬器頁用。嵌在其他流程請維持 False。
     show_open_link:
-        顯示「全螢幕開啟」。連結用 ``target=_top``，手機會離開
-        Streamlit 外框，直接打開靜態模擬器。
+        顯示「全螢幕開啟」。連結用新分頁打開靜態模擬器。
+        Community Cloud 的外層 iframe 不允許 ``target=_top`` 跳出。
     """
     _ensure_ready()
     page = static_page_path()
@@ -179,7 +179,7 @@ def _render_open_link(url: str, *, compact: bool) -> None:
     pad = "10px 12px" if compact else "14px 12px"
     size = "1rem" if compact else "1.15rem"
     st.markdown(
-        f'<a href="{url}" target="_top" rel="noopener" '
+        f'<a href="{url}" target="_blank" rel="noopener" '
         f'style="display:block;text-align:center;background:#c53030;color:#fff;'
         f'font-weight:800;font-size:{size};line-height:1.35;padding:{pad};'
         f'border-radius:10px;text-decoration:none;margin:0 0 8px">'
