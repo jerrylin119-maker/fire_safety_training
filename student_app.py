@@ -1,0 +1,849 @@
+"""
+防火管理訓練互動教學與成效評估系統 — 學員端
+=================================================
+流程：簽到 → 前測 → 動態章節內容（觀念題＋案例應變） → 自衛消防編組模擬闖關 → 後測 → 學習卡
+
+⚠️ 所有題目／案例／建議內容皆由 data/*.json 動態載入，程式碼中不寫死任何題目內容。
+    講師如需調整題庫、案例、闖關劇本，請至「講師後台」頁面編輯或上傳 JSON 檔案。
+
+📌 進度接續：每位學員簽到後會拿到一組「簽到代碼」（其實就是資料庫的學員編號）。
+    只要重新整理同一個網址，或回到簽到頁輸入代碼，就能接續先前的作答進度，
+    不會因為斷線、關閉分頁而全部重來。
+"""
+import html
+from datetime import datetime
+from pathlib import Path
+
+import streamlit as st
+from utils import data_loader as dl
+from utils import db
+from utils.fire_panel import PAGE_SCRIPT, query_requests_fire_panel
+from utils.helpers import score_from_answers
+
+# QR / 短網址：/?page=fire-panel 進受信總機（公開頁，不經講師密碼）。
+# 必須在 set_page_config 之前轉走，模擬器頁才能用自己的寬版設定。
+if query_requests_fire_panel():
+    st.switch_page(PAGE_SCRIPT)
+
+FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Regular.ttf"
+FONT_BOLD_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Bold.ttf"
+
+
+def get_or_init_current_class() -> str:
+    """取得目前講師設定的班別代碼；若講師還沒設定過，自動用今天日期建立一個，
+    並存回 control_state.json，讓同一天的學員都歸屬同一班別。"""
+    control = dl.get_control_state()
+    class_id = control.get("current_class")
+    if not class_id:
+        class_id = datetime.now().strftime("%Y-%m-%d")
+        control["current_class"] = class_id
+        dl.save_control_state(control)
+    return class_id
+
+st.set_page_config(page_title="防火管理訓練互動教學系統", page_icon="🔥", layout="centered")
+db.init_db()
+
+# ---------------- session_state 初始化 ----------------
+DEFAULTS = {
+    "stage": "welcome",
+    "student_id": None,
+    "student_name": "",
+    "student_venue": "",
+    "student_position": "",
+    "student_class": "",
+    "pretest_answers": {},
+    "pretest_score": None,
+    "posttest_answers": {},
+    "posttest_score": None,
+    "case_ptr": 0,
+    "sim_node": None,
+    "sim_task_idx": 0,
+    "sim_ending": None,
+    "resume_attempted": False,
+}
+for k, v in DEFAULTS.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+
+def _restore_from_student_id(student_id) -> bool:
+    """依簽到代碼把學員資料與進度快照讀回 session_state。成功回傳 True。"""
+    student = db.get_student(student_id)
+    if not student:
+        return False
+    progress = db.load_progress(student["id"]) or {}
+    st.session_state.update(
+        student_id=student["id"],
+        student_name=student["name"],
+        student_venue=student["venue"],
+        student_position=student["position"],
+        student_class=student.get("class_id", ""),
+        stage=progress.get("stage") or "pretest",
+        case_ptr=progress.get("case_ptr", 0),
+        sim_node=progress.get("sim_node"),
+        sim_task_idx=progress.get("sim_task_idx", 0),
+        sim_ending=progress.get("sim_ending"),
+        pretest_score=progress.get("pretest_score"),
+        posttest_score=progress.get("posttest_score"),
+        pretest_answers=progress.get("pretest_answers") or {},
+        posttest_answers=progress.get("posttest_answers") or {},
+    )
+    try:
+        st.query_params["sid"] = str(student["id"])
+    except Exception:
+        pass
+    return True
+
+
+def persist_progress():
+    """把目前 session_state 的關鍵進度存進資料庫，供之後接續使用。"""
+    if not st.session_state.student_id:
+        return
+    db.save_progress(st.session_state.student_id, {
+        "stage": st.session_state.stage,
+        "case_ptr": st.session_state.case_ptr,
+        "sim_node": st.session_state.sim_node,
+        "sim_task_idx": st.session_state.sim_task_idx,
+        "sim_ending": st.session_state.sim_ending,
+        "pretest_score": st.session_state.pretest_score,
+        "posttest_score": st.session_state.posttest_score,
+        "pretest_answers": st.session_state.pretest_answers,
+        "posttest_answers": st.session_state.posttest_answers,
+    })
+
+
+# 重新整理頁面時，如果網址帶著 ?sid=xxx，且目前這個瀏覽分頁還沒有學員資料，
+# 就自動嘗試接續進度（不需要學員自己按任何按鈕）。
+if not st.session_state.student_id and not st.session_state.resume_attempted:
+    st.session_state.resume_attempted = True
+    qp_sid = st.query_params.get("sid")
+    if qp_sid:
+        _restore_from_student_id(qp_sid)
+
+# 若尚未簽到卻不在歡迎頁／簽到頁，一律導回歡迎頁
+if st.session_state.stage not in ("welcome", "onboarding") and st.session_state.student_id is None:
+    st.session_state.stage = "welcome"
+
+STAGE_LABELS = {
+    "onboarding": "① 學員簽到",
+    "expectation": "② 課前調查：想獲得什麼",
+    "pretest": "③ 迷思破除前測",
+    "cases": "④ 第一、二堂：章節觀念題與案例",
+    "simulation": "⑤ 第三堂：自衛消防編組闖關",
+    "posttest": "⑥ 觀念後測",
+    "report": "⑦ 學習卡與滿意度調查",
+}
+
+
+def sidebar_progress():
+    control = dl.get_control_state()
+    with st.sidebar:
+        st.title(f"🔥 {control.get('course_title', '防火管理訓練互動教學')}")
+        if control.get("current_class"):
+            st.caption(f"📚 班別：{control['current_class']}")
+        if control.get("notice"):
+            st.info(control["notice"])
+        st.divider()
+        for key, label in STAGE_LABELS.items():
+            st.markdown(f"**➡️ {label}**" if key == st.session_state.stage else f"　{label}")
+        st.divider()
+        if st.session_state.student_name:
+            st.caption(f"👤 {st.session_state.student_name}｜{st.session_state.student_venue}")
+            st.caption(f"🔑 簽到代碼：**{st.session_state.student_id}**（斷線時可用來接續）")
+        with st.expander("重新開始（測試 / 展示用）"):
+            if st.button("清空我的作答，重新開始"):
+                st.session_state.clear()
+                try:
+                    del st.query_params["sid"]
+                except Exception:
+                    pass
+                st.rerun()
+
+
+# ==================== ⓪ 歡迎頁 ====================
+def render_resume_box():
+    """中途離開的學員，輸入簽到代碼接續進度（歡迎頁與簽到頁共用）。"""
+    with st.expander("🔁 我是中途離開的學員，要繼續之前的進度"):
+        st.caption("輸入您簽到時取得的「簽到代碼」，即可接續作答進度。")
+        code = st.text_input("請輸入簽到代碼", key="resume_code_input")
+        if st.button("繼續之前的進度 ➜"):
+            if code.strip() and _restore_from_student_id(code.strip()):
+                st.rerun()
+            else:
+                st.error("找不到這組代碼，請確認輸入是否正確。")
+
+
+def render_welcome():
+    control = dl.get_control_state()
+    class_name = html.escape(control.get("current_class") or datetime.now().strftime("%Y-%m-%d"))
+    topic = control.get("course_topic") or "消防設備維護及管理"
+
+    st.markdown("<div style='text-align:center;font-size:60px;line-height:1.3;margin-top:8px'>🔥🧯🚨</div>",
+                unsafe_allow_html=True)
+    st.markdown(
+        f"<h1 style='text-align:center;line-height:1.5'>歡迎參加<br>{class_name} 期<br>防火管理人訓練班</h1>",
+        unsafe_allow_html=True,
+    )
+    st.info(
+        f"今天的課程是「**{topic}**」。\n\n"
+        "為強化學習效果，課程中將搭配此**互動教學系統**，接下來請簽到進入系統。"
+    )
+    if st.button("開始簽到 ➜", width="stretch", type="primary"):
+        st.session_state.stage = "onboarding"
+        st.rerun()
+    render_resume_box()
+
+
+# ==================== ① 學員簽到 ====================
+def render_onboarding():
+    st.header("👋 學員簽到")
+    st.write("請填寫以下資料，開始今天的防火管理訓練課程。")
+    st.warning(
+        "📌 **請務必記下您的「簽到代碼」**\n\n"
+        "簽到成功後，代碼會顯示在畫面**左側**（手機請點左上角「»」展開側邊欄），"
+        "也會顯示在下一頁（課前調查）最上方。若中途跳出系統、網頁重新整理或斷線，"
+        "回到本頁下方的「我是中途離開的學員」輸入代碼，就能接續進度。"
+    )
+    venues = dl.get_venue_categories()
+    with st.form("onboarding_form"):
+        name = st.text_input("姓名")
+        venue = st.selectbox("場所類別", venues)
+        position = st.text_input("職稱")
+        submitted = st.form_submit_button("開始簽到 ➜", width="stretch")
+    if submitted:
+        if not name.strip():
+            st.error("請輸入姓名。")
+            return
+        class_id = get_or_init_current_class()
+        student_id = db.add_student(name.strip(), venue, position.strip(), class_id)
+        st.session_state.update(
+            student_id=student_id,
+            student_name=name.strip(),
+            student_venue=venue,
+            student_position=position.strip(),
+            student_class=class_id,
+            stage="expectation",
+        )
+        try:
+            st.query_params["sid"] = str(student_id)
+        except Exception:
+            pass
+        persist_progress()
+        st.rerun()
+
+    st.divider()
+    render_resume_box()
+
+
+# ==================== ①-2 課前調查：來上課想獲得什麼 ====================
+def render_expectation():
+    cfg = dl.get_expectation()
+
+    # 已經填過（例如重新整理、接續進度）就直接往前測走，不重複填寫
+    if db.has_expectation_response(st.session_state.student_id):
+        st.session_state.stage = "pretest"
+        persist_progress()
+        st.rerun()
+
+    st.header(f"🎯 {cfg.get('title', '課前調查')}")
+    st.info(
+        f"🔑 **您的簽到代碼：{st.session_state.student_id}**　請記下來或截圖！"
+        "若中途跳出系統，回到簽到頁輸入這組號碼即可接續進度。"
+    )
+    if cfg.get("intro"):
+        st.write(cfg["intro"])
+
+    with st.form("expectation_form"):
+        checked = {}
+        for opt in cfg.get("options", []):
+            checked[opt["text"]] = st.checkbox(opt["text"], key=f"exp_{opt['id']}")
+        other = st.text_area(cfg.get("other_prompt", "其他（選填）"), height=100)
+        submitted = st.form_submit_button("送出，開始前測 ➜", width="stretch")
+
+    if submitted:
+        picked = [text for text, on in checked.items() if on]
+        if not picked and not other.strip():
+            st.error("請至少勾選一項，或在下方文字欄寫下您的期待。")
+            return
+        db.save_expectation_response(st.session_state.student_id, picked, other.strip())
+        st.session_state.stage = "pretest"
+        persist_progress()
+        st.rerun()
+
+
+# ==================== ② / ⑤ 前測與後測（共用邏輯） ====================
+def render_test(phase: str):
+    questions = dl.get_prepost_questions()
+    answers_key = "pretest_answers" if phase == "pre" else "posttest_answers"
+
+    st.header("🧠 迷思破除前測" if phase == "pre" else "🧠 觀念後測")
+    score_key = "pretest_score" if phase == "pre" else "posttest_score"
+    already_done = st.session_state[score_key] is not None
+
+    if not already_done:
+        if phase == "pre":
+            st.info(
+                f"🔑 **您的簽到代碼：{st.session_state.student_id}**　請記下來或截圖！"
+                "若中途跳出系統，回到簽到頁輸入這組號碼即可接續進度。"
+            )
+            st.caption("提交後僅會顯示您的「分數」，正確解答將於課程最後的學習卡中一併公布，請放心作答！")
+        else:
+            st.caption("這是與前測相同的題目，看看你的觀念進步了多少！")
+
+        with st.form(f"{phase}_test_form"):
+            selections = {}
+            for i, q in enumerate(questions):
+                st.subheader(f"Q{i + 1}. {q['question']}")
+                choice = st.radio(
+                    "選項", q["options"], index=None,
+                    key=f"{phase}_{q['id']}", label_visibility="collapsed",
+                )
+                selections[q["id"]] = choice
+            submitted = st.form_submit_button("提交答案", width="stretch")
+
+        if submitted:
+            if any(v is None for v in selections.values()):
+                st.error("請完成所有題目後再提交。")
+                return
+            correctness = []
+            for q in questions:
+                selected_index = q["options"].index(selections[q["id"]])
+                is_correct = selected_index == q["correct_index"]
+                correctness.append(is_correct)
+                db.save_test_answer(st.session_state.student_id, phase, q["id"], selected_index, is_correct)
+
+            score = score_from_answers(correctness)
+            st.session_state[answers_key] = selections
+            st.session_state[score_key] = score
+
+            if phase == "post":
+                st.session_state.stage = "report"
+            persist_progress()
+            st.rerun()
+    else:
+        score = st.session_state[score_key]
+        st.success(f"✅ 提交完成！您的{'前' if phase == 'pre' else '後'}測得分：**{score} 分**（滿分 100 分）")
+        if phase == "pre":
+            if st.button("進入下一階段：章節內容 ➜", width="stretch"):
+                st.session_state.stage = "cases"
+                persist_progress()
+                st.rerun()
+        else:
+            st.session_state.stage = "report"
+            persist_progress()
+            st.rerun()
+
+
+# ==================== ③ 動態章節內容（觀念題＋案例應變） ====================
+def _get_unlocked_flat_items():
+    """把目前已解鎖章節的『觀念題』與『情境案例』依章節順序串成同一份清單。"""
+    control = dl.get_control_state()
+    unlocked_chapter = control.get("unlocked_chapter", 1)
+    chapters = sorted(dl.get_chapters(), key=lambda c: c["unlock_order"])
+    max_order = max((c["unlock_order"] for c in chapters), default=1)
+    flat = []
+    for ch in chapters:
+        if ch["unlock_order"] <= unlocked_chapter:
+            for q in ch.get("quiz", []):
+                flat.append({**q, "_type": "quiz", "chapter_id": ch["chapter_id"], "chapter_title": ch["chapter_title"]})
+            for case in ch["cases"]:
+                flat.append({**case, "_type": "case", "chapter_id": ch["chapter_id"], "chapter_title": ch["chapter_title"]})
+            if ch.get("reminder"):
+                flat.append({**ch["reminder"], "_type": "reminder", "chapter_id": ch["chapter_id"],
+                             "chapter_title": ch["chapter_title"]})
+    # 依章節編題號（觀念題＋案例題），與簡報上的「系統互動｜第X堂 第N題」標籤一致
+    totals = {}
+    for it in flat:
+        if it["_type"] in ("quiz", "case"):
+            totals[it["chapter_id"]] = totals.get(it["chapter_id"], 0) + 1
+    counters = {}
+    for it in flat:
+        if it["_type"] in ("quiz", "case"):
+            counters[it["chapter_id"]] = counters.get(it["chapter_id"], 0) + 1
+            it["_qno"] = counters[it["chapter_id"]]
+            it["_qtotal"] = totals[it["chapter_id"]]
+    return flat, unlocked_chapter, max_order
+
+
+def _render_quiz_item(item):
+    st.markdown("#### 💡 觀念小測驗")
+    st.info(item["question"])
+    answered_key = f"quiz_answered_{item['id']}"
+    if answered_key not in st.session_state:
+        for i, opt_text in enumerate(item["options"]):
+            if st.button(opt_text, key=f"quiz_opt_{item['id']}_{i}", width="stretch"):
+                is_correct = i == item["correct_index"]
+                db.save_case_answer(st.session_state.student_id, item["chapter_id"], item["id"],
+                                     str(i), is_correct, item_type="quiz")
+                st.session_state[answered_key] = i
+                st.rerun()
+    else:
+        selected_i = st.session_state[answered_key]
+        is_correct = selected_i == item["correct_index"]
+        st.markdown(f"**你的答案：{item['options'][selected_i]}**")
+        (st.success if is_correct else st.error)(
+            ("✅ 答對了！" if is_correct else f"❌ 答錯了，正確答案是：{item['options'][item['correct_index']]}")
+        )
+        st.caption(item["explanation"])
+        if st.button("下一題 ➜", width="stretch"):
+            st.session_state.case_ptr += 1
+            persist_progress()
+            st.rerun()
+
+
+def _render_case_item(case):
+    st.markdown("#### 🔥 情境描述")
+    st.warning(case["scenario"])
+
+    answered_key = f"case_answered_{case['case_id']}"
+    if answered_key not in st.session_state:
+        st.markdown("#### 你會怎麼應變？")
+        for opt in case["options"]:
+            if st.button(f"{opt['key']}. {opt['text']}", key=f"case_opt_{case['case_id']}_{opt['key']}",
+                         width="stretch"):
+                is_correct = opt["key"] == case["correct_option"]
+                db.save_case_answer(st.session_state.student_id, case["chapter_id"], case["case_id"],
+                                     opt["key"], is_correct, item_type="case")
+                st.session_state[answered_key] = opt["key"]
+                st.rerun()
+    else:
+        selected_key = st.session_state[answered_key]
+        selected_opt = next(o for o in case["options"] if o["key"] == selected_key)
+        is_correct = selected_key == case["correct_option"]
+
+        st.markdown(f"**你的選擇：{selected_key}. {selected_opt['text']}**")
+        prediction = case["outcome_predictions"].get(selected_key, "")
+        (st.success if is_correct else st.error)(("✅ " if is_correct else "❌ ") + prediction)
+        st.info(f"💡 正確建議：{case['correct_advice']}")
+
+        if st.button("下一個 ➜", width="stretch"):
+            st.session_state.case_ptr += 1
+            persist_progress()
+            st.rerun()
+
+
+def _render_reminder_item(item):
+    st.markdown(f"#### 📌 {item.get('title', '本節重點提醒')}")
+    points_html = "".join(
+        f"<div style='margin:6px 0;font-size:1.05em;color:#1b3a1b'>◆ {p}</div>" for p in item.get("points", [])
+    )
+    st.markdown(
+        f"<div style='background:#eef7ee;border-radius:10px;padding:18px 22px;color:#1b3a1b'>{points_html}</div>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    if st.button("我了解了，繼續 ➜", width="stretch", key=f"reminder_next_{item['chapter_id']}"):
+        st.session_state.case_ptr += 1
+        persist_progress()
+        st.rerun()
+
+
+def render_cases():
+    st.header("📖 動態章節內容")
+    flat_items, unlocked_chapter, max_order = _get_unlocked_flat_items()
+
+    _, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 檢查最新進度"):
+            st.rerun()
+
+    ptr = st.session_state.case_ptr
+    if ptr >= len(flat_items):
+        if unlocked_chapter >= max_order:
+            st.success("🎉 所有章節內容都已完成！")
+            if st.button("前往第三堂：自衛消防編組闖關 ➜", width="stretch"):
+                st.session_state.stage = "simulation"
+                persist_progress()
+                st.rerun()
+        else:
+            st.info("⏳ 已完成目前開放的內容，請等待講師開放下一節課程，或稍後點擊上方「檢查最新進度」。")
+        return
+
+    item = flat_items[ptr]
+    if item.get("_qno"):
+        st.markdown(f"**📍 {item['chapter_title']}｜第 {item['_qno']} 題**（本節共 {item['_qtotal']} 題）")
+    else:
+        st.markdown(f"**📍 {item['chapter_title']}**")
+    if item["_type"] == "quiz":
+        _render_quiz_item(item)
+    elif item["_type"] == "reminder":
+        _render_reminder_item(item)
+    else:
+        _render_case_item(item)
+
+
+# ==================== ④ 自衛消防編組模擬闖關 ====================
+def render_recommended_order(sim):
+    """闖關結束後，以方格逐項浮現「建議應變順序」，與簡報「情境模擬：建議應變順序」頁一致。"""
+    steps = sim.get("recommended_order") or []
+    if not steps:
+        return
+    st.markdown("### 📋 建議應變順序（請牢記）")
+    cells = "".join(
+        f"<div class='ro-item' style='animation-delay:{i * 0.6:.1f}s'>"
+        f"<div class='ro-num'>{i + 1}</div>"
+        f"<div class='ro-t'>{html.escape(s.get('title', ''))}</div>"
+        f"<div class='ro-d'>{html.escape(s.get('desc', ''))}</div></div>"
+        for i, s in enumerate(steps)
+    )
+    st.markdown(
+        "<style>"
+        ".ro-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:8px 0 18px}"
+        ".ro-item{opacity:0;animation:roIn .5s ease forwards;background:#fbe9e9;border:2px solid #d62828;"
+        "border-radius:12px;padding:12px 12px 10px;color:#22252a}"
+        ".ro-num{width:30px;height:30px;border-radius:50%;background:#d62828;color:#fff;font-weight:700;"
+        "display:flex;align-items:center;justify-content:center;margin-bottom:6px}"
+        ".ro-t{font-weight:700;font-size:1.05em}.ro-d{font-size:.85em;color:#6b7280;margin-top:2px}"
+        "@keyframes roIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}"
+        "</style>"
+        f"<div class='ro-grid'>{cells}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_simulation():
+    sim = dl.get_simulation()
+    if st.session_state.sim_node is None:
+        st.session_state.sim_node = sim["start_node"]
+
+    st.header(f"🧯 {sim.get('title', '自衛消防編組模擬闖關')}")
+    node_id = st.session_state.sim_node
+
+    # ---- 結局畫面 ----
+    if node_id in sim.get("endings", {}):
+        ending = sim["endings"][node_id]
+        box = st.success if node_id == "end_good" else st.warning
+        st.markdown(f"## {ending['title']}")
+        if "tiers" in ending:
+            # 依這位學員闖關至今的正確率，挑選最貼近的一段結局建議文字
+            acc = db.get_sim_accuracy(st.session_state.student_id)
+            pct = acc["pct"] if acc["pct"] is not None else 0
+            st.caption(f"闖關正確率：{pct:.0f}%（{acc['correct']}/{acc['total']} 個決策點）")
+            tiers = sorted(ending["tiers"], key=lambda t: t["min_accuracy"], reverse=True)
+            message = next((t["message"] for t in tiers if pct >= t["min_accuracy"]), tiers[-1]["message"])
+            box(message)
+        else:
+            box(ending["message"])
+        render_recommended_order(sim)
+        if st.button("前往下一階段：觀念後測 ➜", width="stretch"):
+            st.session_state.stage = "posttest"
+            persist_progress()
+            st.rerun()
+        return
+
+    node = sim["nodes"][node_id]
+    st.markdown(f"### {node['title']}")
+    if node.get("image_emoji"):
+        st.markdown(
+            f"<div style='font-size:52px;text-align:center;line-height:1.4'>{node['image_emoji']}</div>",
+            unsafe_allow_html=True,
+        )
+    st.warning(node["scenario"])
+
+    if node["type"] == "single_choice":
+        answered_key = f"sim_single_{node_id}"
+        if answered_key not in st.session_state:
+            for opt in node["options"]:
+                if st.button(f"{opt['key']}. {opt['text']}", key=f"sim_opt_{node_id}_{opt['key']}",
+                             width="stretch"):
+                    db.save_sim_log(st.session_state.student_id, node_id, None, opt["key"], opt["correct"])
+                    st.session_state[answered_key] = opt
+                    st.rerun()
+        else:
+            opt = st.session_state[answered_key]
+            (st.success if opt["correct"] else st.error)(opt["feedback"])
+            if st.button("繼續 ➜", width="stretch"):
+                st.session_state.sim_node = opt["next"]
+                if opt["next"] in sim.get("endings", {}):
+                    st.session_state.sim_ending = opt["next"]
+                del st.session_state[answered_key]
+                persist_progress()
+                st.rerun()
+
+    elif node["type"] == "checklist":
+        tasks = node["tasks"]
+        idx = st.session_state.sim_task_idx
+        answers_key = f"sim_checklist_answers_{node_id}"
+        if answers_key not in st.session_state:
+            st.session_state[answers_key] = {}
+
+        if idx >= len(tasks):
+            # 4 項任務都選完了，這時候才一次揭曉每一項的對錯與說明，再給整體建議。
+            st.success("✅ 這個階段的任務已全部完成！以下是逐項結果：")
+            answers = st.session_state[answers_key]
+            for i, task in enumerate(tasks):
+                opt = answers.get(task["id"])
+                st.markdown(f"**{task['prompt']}**")
+                if opt:
+                    st.markdown(f"你的選擇：{opt['key']}. {opt['text']}")
+                    (st.success if opt["correct"] else st.error)(
+                        ("✅ " if opt["correct"] else "❌ ") + opt["feedback"]
+                    )
+                if i < len(tasks) - 1:
+                    st.write("")
+            if node.get("group_advice"):
+                st.info(node["group_advice"])
+            if st.button("前往下一階段 ➜", width="stretch"):
+                st.session_state.sim_node = node["next"]
+                st.session_state.sim_task_idx = 0
+                del st.session_state[answers_key]
+                if node["next"] in sim.get("endings", {}):
+                    st.session_state.sim_ending = node["next"]
+                persist_progress()
+                st.rerun()
+            return
+
+        st.progress(idx / len(tasks), text=f"任務進度：{idx}/{len(tasks)}")
+        task = tasks[idx]
+        st.markdown(f"**{task['prompt']}**")
+
+        for opt in task["options"]:
+            if st.button(f"{opt['key']}. {opt['text']}",
+                         key=f"sim_task_opt_{node_id}_{task['id']}_{opt['key']}",
+                         width="stretch"):
+                db.save_sim_log(st.session_state.student_id, node_id, task["id"], opt["key"], opt["correct"])
+                st.session_state[answers_key][task["id"]] = opt
+                st.session_state.sim_task_idx += 1
+                persist_progress()
+                st.rerun()
+
+
+def build_report_pdf() -> bytes:
+    """把課後學習卡的內容排成一份 PDF（內嵌中文字型），回傳檔案的 bytes。
+    PDF 內文一律不使用 emoji／符號，只用中文與基本標點，避免字型缺字造成錯誤。"""
+    from fpdf import FPDF, XPos, YPos
+
+    pre = st.session_state.pretest_score or 0
+    post = st.session_state.posttest_score or 0
+    content_acc = db.get_content_accuracy(st.session_state.student_id)
+    sim_acc = db.get_sim_accuracy(st.session_state.student_id)
+    components = [v for v in [post, content_acc["pct"], sim_acc["pct"]] if v is not None]
+    total_score = round(sum(components) / len(components), 1) if components else 0
+    improve = "—" if pre == 0 else f"{round((post - pre) / pre * 100, 1)}%"
+    ending_label = {"end_good": "圓滿完成應變", "end_bad_abandon": "應變中斷"}.get(
+        st.session_state.sim_ending, "尚未完成"
+    )
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.add_font("NotoTC", "", str(FONT_PATH))
+    pdf.add_font("NotoTC", "B", str(FONT_BOLD_PATH))
+
+    def title(text, size=16, color=(15, 15, 15), gap_before=0, gap_after=4):
+        if gap_before:
+            pdf.ln(gap_before)
+        pdf.set_font("NotoTC", style="B", size=size)
+        pdf.set_text_color(*color)
+        pdf.multi_cell(0, size * 0.6, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(gap_after)
+
+    def body(text, size=11, color=(35, 35, 35), bold=False):
+        pdf.set_font("NotoTC", style="B" if bold else "", size=size)
+        pdf.set_text_color(*color)
+        pdf.multi_cell(0, size * 0.62, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    title("防火管理訓練 課後學習卡", size=18, gap_after=2)
+    body(
+        f"{st.session_state.student_name}　{st.session_state.student_venue}　"
+        f"班別：{st.session_state.student_class}　日期：{datetime.now():%Y-%m-%d}",
+        size=10, color=(70, 70, 70),
+    )
+
+    title("前後測分數對比", size=13, gap_before=6)
+    body(f"前測分數：{pre} 分　後測分數：{post} 分　進步幅度：{improve}")
+
+    title("課程參與表現", size=13, gap_before=6)
+    content_line = f"{content_acc['pct']}%" if content_acc["pct"] is not None else "未作答"
+    sim_line = f"{sim_acc['pct']}%" if sim_acc["pct"] is not None else "未作答"
+    body(
+        f"章節內容正確率：{content_line}\n闖關應變正確率：{sim_line}\n"
+        f"闖關結局：{ending_label}\n綜合總分：{total_score} 分"
+    )
+
+    title("迷思題解答回顧", size=13, gap_before=6)
+    questions = dl.get_prepost_questions()
+    post_answers = st.session_state.posttest_answers
+    for i, q in enumerate(questions):
+        selected = post_answers.get(q["id"], "（未作答）")
+        correct = q["options"][q["correct_index"]]
+        is_correct = selected == correct
+        mark = "正確" if is_correct else "錯誤"
+        mark_color = (20, 120, 20) if is_correct else (180, 30, 30)
+        body(f"Q{i + 1}. {q['question']}", size=11, color=(15, 15, 15), bold=True)
+        body(f"你的答案：{selected}（{mark}）　正確答案：{correct}", size=10, color=mark_color, bold=True)
+        body(q["explanation"], size=9, color=(70, 70, 70))
+        pdf.ln(2)
+
+    title(f"{st.session_state.student_venue}　專屬課後提醒卡", size=13, gap_before=4)
+    advice = dl.get_venue_advice().get(st.session_state.student_venue, {})
+    if advice.get("reminder"):
+        body(advice["reminder"])
+        pdf.ln(1)
+    for item in advice.get("checklist", []):
+        body(f"．{item}", size=10)
+
+    title(f"恭喜 {st.session_state.student_name}，完成本次防火管理訓練課程！",
+          size=12, color=(20, 120, 20), gap_before=6, gap_after=0)
+
+    return bytes(pdf.output())
+
+
+# ==================== ⑥-2 課後滿意度調查 ====================
+def render_survey():
+    survey = dl.get_survey()
+    st.divider()
+    st.subheader(f"📝 {survey.get('title', '課後滿意度調查')}")
+    if db.has_survey_response(st.session_state.student_id):
+        st.success("✅ 已收到您的回饋，感謝您的填寫！")
+        return
+
+    if survey.get("intro"):
+        st.write(survey["intro"])
+    labels = survey.get("scale_labels", {})
+    options = [f"{n}　{labels.get(str(n), '')}".strip() for n in (5, 4, 3, 2, 1)]
+
+    with st.form("survey_form"):
+        picked = {}
+        for q in survey.get("questions", []):
+            st.markdown(f"**{q['text']}**")
+            picked[q["id"]] = st.radio(
+                q["text"], options, index=None, horizontal=True,
+                key=f"survey_{q['id']}", label_visibility="collapsed",
+            )
+        suggestion = st.text_area(survey.get("suggestion_prompt", "建議事項"), height=120)
+        submitted = st.form_submit_button("送出滿意度調查", width="stretch")
+
+    if submitted:
+        if any(v is None for v in picked.values()):
+            st.error("請先為每一題選擇滿意程度（建議事項可以留白）。")
+            return
+        answers = {qid: int(v[0]) for qid, v in picked.items()}
+        db.save_survey_response(st.session_state.student_id, answers, suggestion.strip())
+        st.rerun()
+
+
+# ==================== ⑥ 學習卡與總結 ====================
+def render_report():
+    # 只在「列印 / 存成PDF」時生效的樣式：隱藏側邊欄、工具列、按鈕，
+    # 讓學員存下來的畫面乾淨、只留學習卡本身的內容。
+    st.markdown(
+        """
+        <style>
+        @media print {
+            [data-testid="stSidebar"] { display: none !important; }
+            [data-testid="stHeader"] { display: none !important; }
+            [data-testid="stToolbar"] { display: none !important; }
+            #MainMenu { display: none !important; }
+            footer { display: none !important; }
+            .stButton { display: none !important; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.header("🎓 課後學習卡")
+    st.caption(
+        f"👤 {st.session_state.student_name}｜{st.session_state.student_venue}｜"
+        f"班別：{st.session_state.student_class}｜"
+        f"日期：{datetime.now():%Y-%m-%d}"
+    )
+
+    st.markdown("#### 📥 保留這張學習卡")
+    if "report_pdf_bytes" not in st.session_state:
+        with st.spinner("正在產生 PDF…"):
+            st.session_state.report_pdf_bytes = build_report_pdf()
+    st.download_button(
+        "📄 下載我的學習卡（PDF）",
+        st.session_state.report_pdf_bytes,
+        file_name=f"學習卡_{st.session_state.student_name}_{datetime.now():%Y%m%d}.pdf",
+        mime="application/pdf",
+        width="stretch",
+    )
+    with st.expander("下載按鈕跑不出來，或想直接截圖？點我看其他方法"):
+        st.markdown(
+            "**用手機瀏覽器列印成 PDF**\n"
+            "- **iPhone / Safari**：點畫面下方的「分享」圖示 ➜ 選「列印」➜ 預覽畫面用兩指「放大」一下 ➜ "
+            "左上角再點一次「分享」圖示 ➜ 選「儲存至檔案」或直接傳送給自己\n"
+            "- **Android / Chrome**：點右上角「⋮」選單 ➜ 「分享」➜「列印」➜ 目的地選「另存為 PDF」➜ 儲存\n\n"
+            "**直接截圖**\n"
+            "- 這頁內容比較長，建議捲動頁面分段截圖（例如分數對比一張、迷思題解答一張、場所提醒卡一張），"
+            "存到手機相簿即可。"
+        )
+
+    pre = st.session_state.pretest_score or 0
+    post = st.session_state.posttest_score or 0
+    content_acc = db.get_content_accuracy(st.session_state.student_id)
+    sim_acc = db.get_sim_accuracy(st.session_state.student_id)
+
+    st.subheader("📊 前後測分數對比")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("前測分數", f"{pre} 分")
+    col2.metric("後測分數", f"{post} 分", delta=f"{round(post - pre, 1)} 分")
+    improve = "—" if pre == 0 else f"{round((post - pre) / pre * 100, 1)}%"
+    col3.metric("進步幅度", improve)
+
+    st.divider()
+    st.subheader("🧩 課程參與表現")
+    col4, col5, col6 = st.columns(3)
+    col4.metric("章節內容正確率",
+                f"{content_acc['pct']}%" if content_acc["pct"] is not None else "未作答",
+                help=f"共作答 {content_acc['total']} 題（觀念題＋案例），答對 {content_acc['correct']} 題")
+    col5.metric("闖關應變正確率",
+                f"{sim_acc['pct']}%" if sim_acc["pct"] is not None else "未作答",
+                help=f"共 {sim_acc['total']} 個決策點，正確 {sim_acc['correct']} 個")
+    ending_label = {
+        "end_good": "✅ 圓滿完成應變",
+        "end_bad_abandon": "⚠️ 應變中斷",
+    }.get(st.session_state.sim_ending, "—")
+    col6.metric("闖關結局", ending_label)
+
+    # 總分：後測分數、章節內容正確率、闖關正確率，三者平均（缺項則以已完成的項目平均）
+    components = [v for v in [post, content_acc["pct"], sim_acc["pct"]] if v is not None]
+    total_score = round(sum(components) / len(components), 1) if components else 0
+    st.divider()
+    st.metric("🏆 綜合總分", f"{total_score} 分", help="由後測分數、章節內容正確率、闖關應變正確率平均計算")
+
+    st.divider()
+    st.subheader("📚 迷思題解答回顧")
+    questions = dl.get_prepost_questions()
+    post_answers = st.session_state.posttest_answers
+    for i, q in enumerate(questions):
+        selected = post_answers.get(q["id"])
+        correct = q["options"][q["correct_index"]]
+        st.markdown(f"**Q{i + 1}. {q['question']}**")
+        if selected == correct:
+            st.success(f"你的答案：{selected} ✅")
+        else:
+            st.error(f"你的答案：{selected}　|　正確答案：{correct}")
+        st.caption(q["explanation"])
+
+    st.divider()
+    st.subheader(f"📋 {st.session_state.student_venue} 專屬課後提醒卡")
+    advice = dl.get_venue_advice().get(st.session_state.student_venue, {})
+    st.markdown(f"### {advice.get('emoji', '🏢')} {st.session_state.student_venue}")
+    st.info(advice.get("reminder", ""))
+    for item in advice.get("checklist", []):
+        st.markdown(f"- {item}")
+
+    st.divider()
+    st.success(f"🎉 恭喜 {st.session_state.student_name}，完成本次防火管理訓練課程！")
+    st.caption("最後，請花 1 分鐘填寫下方的課後滿意度調查 👇")
+    render_survey()
+
+
+# ==================== 主流程路由 ====================
+sidebar_progress()
+
+ROUTES = {
+    "welcome": render_welcome,
+    "onboarding": render_onboarding,
+    "expectation": render_expectation,
+    "pretest": lambda: render_test("pre"),
+    "cases": render_cases,
+    "simulation": render_simulation,
+    "posttest": lambda: render_test("post"),
+    "report": render_report,
+}
+ROUTES[st.session_state.stage]()

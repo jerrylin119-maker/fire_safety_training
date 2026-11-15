@@ -8,7 +8,8 @@
 
 ```
 fire_safety_training/
-├── app.py                          # 學員端主程式（簽到→前測→案例→闖關→後測→學習卡）
+├── app.py                          # 入口與側欄導覽（Cloud 的 Main file path）
+├── student_app.py                  # 學員端主程式（簽到→前測→案例→闖關→後測→學習卡）
 ├── pages/
 │   └── 1_🧑‍🏫_講師後台.py           # 講師後台（密碼保護、儀表板、題庫管理、章節解鎖控制）
 ├── utils/
