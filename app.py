@@ -17,7 +17,13 @@ from pathlib import Path
 import streamlit as st
 from utils import data_loader as dl
 from utils import db
+from utils.fire_panel import PAGE_SCRIPT, query_requests_fire_panel
 from utils.helpers import score_from_answers
+
+# QR / 短網址：/?page=fire-panel 進受信總機（公開頁，不經講師密碼）。
+# 必須在 set_page_config 之前轉走，模擬器頁才能用自己的寬版設定。
+if query_requests_fire_panel():
+    st.switch_page(PAGE_SCRIPT)
 
 FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Regular.ttf"
 FONT_BOLD_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "NotoSansTC-Bold.ttf"
@@ -122,8 +128,8 @@ STAGE_LABELS = {
     "onboarding": "① 學員簽到",
     "expectation": "② 課前調查：想獲得什麼",
     "pretest": "③ 迷思破除前測",
-    "cases": "④ 章節內容（觀念題＋案例）",
-    "simulation": "⑤ 自衛消防編組闖關",
+    "cases": "④ 第一、二堂：章節觀念題與案例",
+    "simulation": "⑤ 第三堂：自衛消防編組闖關",
     "posttest": "⑥ 觀念後測",
     "report": "⑦ 學習卡與滿意度調查",
 }
@@ -345,6 +351,17 @@ def _get_unlocked_flat_items():
             if ch.get("reminder"):
                 flat.append({**ch["reminder"], "_type": "reminder", "chapter_id": ch["chapter_id"],
                              "chapter_title": ch["chapter_title"]})
+    # 依章節編題號（觀念題＋案例題），與簡報上的「系統互動｜第X堂 第N題」標籤一致
+    totals = {}
+    for it in flat:
+        if it["_type"] in ("quiz", "case"):
+            totals[it["chapter_id"]] = totals.get(it["chapter_id"], 0) + 1
+    counters = {}
+    for it in flat:
+        if it["_type"] in ("quiz", "case"):
+            counters[it["chapter_id"]] = counters.get(it["chapter_id"], 0) + 1
+            it["_qno"] = counters[it["chapter_id"]]
+            it["_qtotal"] = totals[it["chapter_id"]]
     return flat, unlocked_chapter, max_order
 
 
@@ -434,7 +451,7 @@ def render_cases():
     if ptr >= len(flat_items):
         if unlocked_chapter >= max_order:
             st.success("🎉 所有章節內容都已完成！")
-            if st.button("前往下一階段：自衛消防編組闖關 ➜", width="stretch"):
+            if st.button("前往第三堂：自衛消防編組闖關 ➜", width="stretch"):
                 st.session_state.stage = "simulation"
                 persist_progress()
                 st.rerun()
@@ -443,7 +460,10 @@ def render_cases():
         return
 
     item = flat_items[ptr]
-    st.caption(item["chapter_title"])
+    if item.get("_qno"):
+        st.markdown(f"**📍 {item['chapter_title']}｜第 {item['_qno']} 題**（本節共 {item['_qtotal']} 題）")
+    else:
+        st.markdown(f"**📍 {item['chapter_title']}**")
     if item["_type"] == "quiz":
         _render_quiz_item(item)
     elif item["_type"] == "reminder":
@@ -453,6 +473,34 @@ def render_cases():
 
 
 # ==================== ④ 自衛消防編組模擬闖關 ====================
+def render_recommended_order(sim):
+    """闖關結束後，以方格逐項浮現「建議應變順序」，與簡報「情境模擬：建議應變順序」頁一致。"""
+    steps = sim.get("recommended_order") or []
+    if not steps:
+        return
+    st.markdown("### 📋 建議應變順序（請牢記）")
+    cells = "".join(
+        f"<div class='ro-item' style='animation-delay:{i * 0.6:.1f}s'>"
+        f"<div class='ro-num'>{i + 1}</div>"
+        f"<div class='ro-t'>{html.escape(s.get('title', ''))}</div>"
+        f"<div class='ro-d'>{html.escape(s.get('desc', ''))}</div></div>"
+        for i, s in enumerate(steps)
+    )
+    st.markdown(
+        "<style>"
+        ".ro-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:8px 0 18px}"
+        ".ro-item{opacity:0;animation:roIn .5s ease forwards;background:#fbe9e9;border:2px solid #d62828;"
+        "border-radius:12px;padding:12px 12px 10px;color:#22252a}"
+        ".ro-num{width:30px;height:30px;border-radius:50%;background:#d62828;color:#fff;font-weight:700;"
+        "display:flex;align-items:center;justify-content:center;margin-bottom:6px}"
+        ".ro-t{font-weight:700;font-size:1.05em}.ro-d{font-size:.85em;color:#6b7280;margin-top:2px}"
+        "@keyframes roIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}"
+        "</style>"
+        f"<div class='ro-grid'>{cells}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_simulation():
     sim = dl.get_simulation()
     if st.session_state.sim_node is None:
@@ -476,6 +524,7 @@ def render_simulation():
             box(message)
         else:
             box(ending["message"])
+        render_recommended_order(sim)
         if st.button("前往下一階段：觀念後測 ➜", width="stretch"):
             st.session_state.stage = "posttest"
             persist_progress()

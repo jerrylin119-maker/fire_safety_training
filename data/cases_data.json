@@ -2,7 +2,7 @@
   "chapters": [
     {
       "chapter_id": 1,
-      "chapter_title": "第1節：防火管理有什麼重要？",
+      "chapter_title": "第一堂｜防火管理的意義",
       "unlock_order": 1,
       "quiz": [
         {
@@ -52,7 +52,7 @@
         }
       ],
       "reminder": {
-        "title": "本節重點提醒",
+        "title": "防火管理的意義",
         "points": [
           "自己的財產自己保護",
           "法規是安全的最低標準",
@@ -62,7 +62,7 @@
     },
     {
       "chapter_id": 2,
-      "chapter_title": "第2節：火警自動警報設備為什麼最重要",
+      "chapter_title": "第二堂 第1節｜警報設備：火警自動警報設備為什麼最重要",
       "unlock_order": 2,
       "quiz": [
         {
@@ -87,7 +87,7 @@
       ],
       "cases": [],
       "reminder": {
-        "title": "本節重點提醒",
+        "title": "火警自動警報設備操作重點",
         "points": [
           "維持火警設備運作正常！",
           "明瞭受信總機上的訊號代表什麼",
@@ -97,7 +97,7 @@
     },
     {
       "chapter_id": 3,
-      "chapter_title": "第3節：避難器具助逃生",
+      "chapter_title": "第二堂 第2節｜避難逃生設備",
       "unlock_order": 3,
       "quiz": [
         {
@@ -115,7 +115,7 @@
       ],
       "cases": [],
       "reminder": {
-        "title": "本節重點提醒",
+        "title": "避難逃生設備操作重點",
         "points": [
           "知道場所避難逃生設備的設置地點！",
           "維持設備堪用及會使用！",
@@ -125,7 +125,7 @@
     },
     {
       "chapter_id": 4,
-      "chapter_title": "第4節：滅火真的很危險",
+      "chapter_title": "第二堂 第3節｜滅火設備：滅火真的很危險",
       "unlock_order": 4,
       "quiz": [
         {
