@@ -1,5 +1,5 @@
 """
-SQLite 資料儲存層 (v3 - 含班別、滿意度調查)
+SQLite 資料儲存層 (v4 - 含班別、滿意度調查、課前期望調查)
 ---------------------------------
 所有學員的簽到、前後測作答、章節內容（案例/觀念題）作答、闖關紀錄都寫進同一個
 SQLite 檔案，讓「講台上的講師後台」與「學員手機端」讀寫同一份資料，避免多支手機
@@ -104,6 +104,14 @@ def init_db():
             created_at TEXT
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS expectation_responses (
+            student_id INTEGER PRIMARY KEY,
+            selected TEXT,         -- JSON：勾選的期待項目（存當下的選項文字）
+            other_text TEXT,       -- 其他想學習的內容（自由填寫）
+            created_at TEXT
+        )
+    """)
     # 相容舊資料庫：補上後來才新增的欄位。
     _ensure_column(conn, "case_answers", "item_type", "TEXT DEFAULT 'case'")
     _ensure_column(conn, "students", "class_id", "TEXT")
@@ -195,6 +203,26 @@ def save_survey_response(student_id: int, answers: dict, suggestion: str):
 def has_survey_response(student_id: int) -> bool:
     conn = get_conn()
     row = conn.execute("SELECT 1 FROM survey_responses WHERE student_id = ?", (student_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def save_expectation_response(student_id: int, selected: list, other_text: str):
+    """儲存（或覆蓋）該學員的課前期望調查回覆。selected 存勾選項目的文字。"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO expectation_responses (student_id, selected, other_text, created_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(student_id) DO UPDATE SET selected=excluded.selected, other_text=excluded.other_text, "
+        "created_at=excluded.created_at",
+        (student_id, json.dumps(selected, ensure_ascii=False), other_text, _now()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def has_expectation_response(student_id: int) -> bool:
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM expectation_responses WHERE student_id = ?", (student_id,)).fetchone()
     conn.close()
     return row is not None
 
@@ -358,6 +386,25 @@ def get_survey_df(class_id: str | None = None) -> pd.DataFrame:
     return df
 
 
+def get_expectation_df(class_id: str | None = None) -> pd.DataFrame:
+    """課前期望調查原始回覆（selected 為 JSON 字串），可依班別篩選。"""
+    conn = get_conn()
+    sql = """
+        SELECT er.student_id, s.name, s.venue, s.position, s.class_id,
+               er.created_at, er.selected, er.other_text
+        FROM expectation_responses er
+        JOIN students s ON s.id = er.student_id
+        {where}
+        ORDER BY er.created_at DESC
+    """
+    if class_id:
+        df = pd.read_sql_query(sql.format(where="WHERE s.class_id = ?"), conn, params=(class_id,))
+    else:
+        df = pd.read_sql_query(sql.format(where=""), conn)
+    conn.close()
+    return df
+
+
 def get_content_accuracy(student_id: int) -> dict:
     """該學員在章節內容（案例＋觀念題）的正確率。"""
     conn = get_conn()
@@ -385,7 +432,7 @@ def get_sim_accuracy(student_id: int) -> dict:
 def reset_all_data():
     """危險操作：清空所有作答紀錄與簽到名冊（課後打包完畢、準備開下一班時使用）。"""
     conn = get_conn()
-    for table in ["students", "test_answers", "case_answers", "sim_log", "progress", "survey_responses"]:
+    for table in ["students", "test_answers", "case_answers", "sim_log", "progress", "survey_responses", "expectation_responses"]:
         conn.execute(f"DELETE FROM {table}")
     conn.commit()
     conn.close()

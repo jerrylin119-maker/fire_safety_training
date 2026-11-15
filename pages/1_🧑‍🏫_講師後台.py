@@ -16,7 +16,8 @@ import streamlit as st
 from utils import data_loader as dl
 from utils import db
 from utils.helpers import check_admin_password
-from utils.reporting import build_class_package, expand_survey_df, survey_summary
+from utils.reporting import (build_class_package, expand_expectation_df, expand_survey_df,
+                             expectation_summary, survey_summary)
 
 st.set_page_config(page_title="講師後台 - 防火管理訓練系統", page_icon="🧑‍🏫", layout="wide")
 db.init_db()
@@ -222,6 +223,36 @@ with tab_dash:
                 st.altair_chart(bar, width="stretch")
 
         st.divider()
+        st.subheader("🎯 課前調查：學員想獲得什麼")
+        expect_cfg = dl.get_expectation()
+        expect_raw_df = db.get_expectation_df(selected_class)
+        if expect_raw_df.empty:
+            st.info("目前尚無學員填寫課前調查。")
+        else:
+            st.caption(f"已有 {len(expect_raw_df)} 人填寫（簽到 {len(students_df)} 人），可複選，講師可依此調整今天的講解重點。")
+            exp_summary_df = expectation_summary(expect_raw_df, expect_cfg.get("options", []))
+            ec1, ec2 = st.columns([3, 2])
+            with ec1:
+                exp_chart = (
+                    alt.Chart(exp_summary_df).mark_bar()
+                    .encode(x=alt.X("人數:Q", axis=alt.Axis(tickMinStep=1)),
+                            y=alt.Y("期待項目:N", sort="-x", axis=alt.Axis(labelLimit=400)),
+                            tooltip=["期待項目", "人數", "比例%"])
+                )
+                st.altair_chart(exp_chart, width="stretch")
+            with ec2:
+                st.dataframe(exp_summary_df, width="stretch", hide_index=True)
+            others = expect_raw_df[expect_raw_df["other_text"].fillna("").str.strip() != ""]
+            st.markdown("**✍️ 學員補充想學習／想請教的內容**")
+            if others.empty:
+                st.caption("（沒有學員補充）")
+            else:
+                st.dataframe(
+                    others[["name", "venue", "other_text"]].rename(
+                        columns={"name": "姓名", "venue": "場所類別", "other_text": "補充內容"}),
+                    width="stretch", hide_index=True)
+
+        st.divider()
         st.subheader("😊 課後滿意度調查結果")
         survey_cfg = dl.get_survey()
         survey_raw_df = db.get_survey_df(selected_class)
@@ -253,7 +284,7 @@ with tab_dash:
 
         st.divider()
         st.subheader("⬇️ 資料匯出（依目前篩選的班別）")
-        colA, colB, colC, colD = st.columns(4)
+        colA, colB, colC, colD, colE = st.columns(5)
         with colA:
             st.download_button("匯出簽到名冊 CSV", students_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"roster_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
@@ -273,6 +304,11 @@ with tab_dash:
             st.download_button("匯出滿意度調查 CSV", survey_export_df.to_csv(index=False).encode("utf-8-sig"),
                                 file_name=f"survey_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
                                 width="stretch", disabled=survey_export_df.empty)
+        with colE:
+            expect_export_df = expand_expectation_df(db.get_expectation_df(selected_class))
+            st.download_button("匯出課前調查 CSV", expect_export_df.to_csv(index=False).encode("utf-8-sig"),
+                                file_name=f"expectation_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
+                                width="stretch", disabled=expect_export_df.empty)
 
     if st.button("🔄 重新整理儀表板"):
         st.rerun()
@@ -319,7 +355,7 @@ with tab_class:
     else:
         pkg_students_df = db.get_students_df(current_class)
         st.caption(f"將打包「{current_class}」，共 {len(pkg_students_df)} 位學員的資料"
-                   "（簽到名冊、前後測成績、章節作答、闖關紀錄、滿意度調查、摘要報告）。")
+                   "（簽到名冊、課前調查、前後測成績、章節作答、闖關紀錄、滿意度調查、摘要報告）。")
         if st.button("📦 產生打包檔", width="stretch", disabled=pkg_students_df.empty):
             st.session_state["_class_pkg_bytes"] = build_class_package(current_class)
             st.session_state["_class_pkg_name"] = current_class
@@ -564,6 +600,29 @@ with tab_sys:
             st.error(f"檔案格式錯誤：{e}")
     st.download_button("⬇️ 下載目前 venue_advice.json", dl.raw_json_text("venue"),
                         file_name="venue_advice.json", mime="application/json")
+
+    st.divider()
+    st.subheader("🎯 課前調查題目（來上課想獲得什麼）")
+    st.caption("直接編輯 JSON：options 是可勾選的期待項目（每項的 id 不能重複），other_prompt 是自由填寫欄的提示文字。"
+               "已經有學員填過的班別，改文字不影響舊資料（舊資料保留當時的選項文字）。")
+    expect_text = st.text_area("編輯 expectation.json", value=dl.raw_json_text("expectation"),
+                               height=300, key="expectation_json_text")
+    if st.button("💾 驗證並儲存課前調查題目"):
+        try:
+            data = json.loads(expect_text)
+            opts = data.get("options")
+            if not isinstance(opts, list) or not opts:
+                raise ValueError("options 必須是至少一個項目的清單")
+            ids = [o["id"] for o in opts]
+            if len(set(ids)) != len(ids):
+                raise ValueError("項目 id 不能重複")
+            texts = [o.get("text", "") for o in opts]
+            if not all(texts) or len(set(texts)) != len(texts):
+                raise ValueError("每個項目都要有 text，且文字不能重複")
+            dl.save_expectation(data)
+            st.success("已儲存！")
+        except Exception as e:
+            st.error(f"格式錯誤：{e}")
 
     st.divider()
     st.subheader("😊 課後滿意度調查題目")

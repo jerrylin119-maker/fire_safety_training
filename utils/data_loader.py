@@ -1,5 +1,5 @@
 """
-資料載入 / 儲存工具 (v3)
+資料載入 / 儲存工具 (v4)
 ---------------------------------
 所有「章節案例」「前後測題目」「場所建議」「闖關劇本」「解鎖控制狀態」
 都獨立存放於 data/ 目錄下的 JSON 檔案，程式碼中完全不寫死內容。
@@ -16,6 +16,7 @@ CASES_FILE = DATA_DIR / "cases_data.json"
 VENUE_FILE = DATA_DIR / "venue_advice.json"
 SIMULATION_FILE = DATA_DIR / "simulation_data.json"
 SURVEY_FILE = DATA_DIR / "survey.json"
+EXPECTATION_FILE = DATA_DIR / "expectation.json"
 CONTROL_FILE = DATA_DIR / "control_state.json"
 
 
@@ -79,6 +80,25 @@ def save_simulation(data: dict) -> None:
     _save(SIMULATION_FILE, data)
 
 
+# ---------- 課前調查（來上課想獲得什麼） ----------
+DEFAULT_EXPECTATION = {
+    "title": "課前調查：您今天想獲得什麼？",
+    "intro": "可複選，也可以在下方自行補充。",
+    "options": [{"id": "e1", "text": "取得結訓證書／防火管理人資格"}],
+    "other_prompt": "其他想學習或想請教講師的內容（選填）",
+}
+
+
+def get_expectation() -> dict:
+    if not EXPECTATION_FILE.exists():
+        return DEFAULT_EXPECTATION
+    return _load(EXPECTATION_FILE)
+
+
+def save_expectation(data: dict) -> None:
+    _save(EXPECTATION_FILE, data)
+
+
 # ---------- 課後滿意度調查題目 ----------
 DEFAULT_SURVEY = {
     "title": "課後滿意度調查",
@@ -121,6 +141,7 @@ def raw_json_text(which: str) -> str:
         "venue": VENUE_FILE,
         "simulation": SIMULATION_FILE,
         "survey": SURVEY_FILE,
+        "expectation": EXPECTATION_FILE,
     }
     path = mapping[which]
     return path.read_text(encoding="utf-8")
@@ -134,6 +155,7 @@ def overwrite_from_upload(which: str, uploaded_bytes: bytes) -> None:
         "venue": VENUE_FILE,
         "simulation": SIMULATION_FILE,
         "survey": SURVEY_FILE,
+        "expectation": EXPECTATION_FILE,
     }
     path = mapping[which]
     data = json.loads(uploaded_bytes.decode("utf-8"))  # 驗證格式

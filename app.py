@@ -120,11 +120,12 @@ if st.session_state.stage not in ("welcome", "onboarding") and st.session_state.
 
 STAGE_LABELS = {
     "onboarding": "① 學員簽到",
-    "pretest": "② 迷思破除前測",
-    "cases": "③ 章節內容（觀念題＋案例）",
-    "simulation": "④ 自衛消防編組闖關",
-    "posttest": "⑤ 觀念後測",
-    "report": "⑥ 學習卡與滿意度調查",
+    "expectation": "② 課前調查：想獲得什麼",
+    "pretest": "③ 迷思破除前測",
+    "cases": "④ 章節內容（觀念題＋案例）",
+    "simulation": "⑤ 自衛消防編組闖關",
+    "posttest": "⑥ 觀念後測",
+    "report": "⑦ 學習卡與滿意度調查",
 }
 
 
@@ -194,7 +195,7 @@ def render_onboarding():
     st.warning(
         "📌 **請務必記下您的「簽到代碼」**\n\n"
         "簽到成功後，代碼會顯示在畫面**左側**（手機請點左上角「»」展開側邊欄），"
-        "也會顯示在前測頁面最上方。若中途跳出系統、網頁重新整理或斷線，"
+        "也會顯示在下一頁（課前調查）最上方。若中途跳出系統、網頁重新整理或斷線，"
         "回到本頁下方的「我是中途離開的學員」輸入代碼，就能接續進度。"
     )
     venues = dl.get_venue_categories()
@@ -215,7 +216,7 @@ def render_onboarding():
             student_venue=venue,
             student_position=position.strip(),
             student_class=class_id,
-            stage="pretest",
+            stage="expectation",
         )
         try:
             st.query_params["sid"] = str(student_id)
@@ -226,6 +227,42 @@ def render_onboarding():
 
     st.divider()
     render_resume_box()
+
+
+# ==================== ①-2 課前調查：來上課想獲得什麼 ====================
+def render_expectation():
+    cfg = dl.get_expectation()
+
+    # 已經填過（例如重新整理、接續進度）就直接往前測走，不重複填寫
+    if db.has_expectation_response(st.session_state.student_id):
+        st.session_state.stage = "pretest"
+        persist_progress()
+        st.rerun()
+
+    st.header(f"🎯 {cfg.get('title', '課前調查')}")
+    st.info(
+        f"🔑 **您的簽到代碼：{st.session_state.student_id}**　請記下來或截圖！"
+        "若中途跳出系統，回到簽到頁輸入這組號碼即可接續進度。"
+    )
+    if cfg.get("intro"):
+        st.write(cfg["intro"])
+
+    with st.form("expectation_form"):
+        checked = {}
+        for opt in cfg.get("options", []):
+            checked[opt["text"]] = st.checkbox(opt["text"], key=f"exp_{opt['id']}")
+        other = st.text_area(cfg.get("other_prompt", "其他（選填）"), height=100)
+        submitted = st.form_submit_button("送出，開始前測 ➜", width="stretch")
+
+    if submitted:
+        picked = [text for text, on in checked.items() if on]
+        if not picked and not other.strip():
+            st.error("請至少勾選一項，或在下方文字欄寫下您的期待。")
+            return
+        db.save_expectation_response(st.session_state.student_id, picked, other.strip())
+        st.session_state.stage = "pretest"
+        persist_progress()
+        st.rerun()
 
 
 # ==================== ② / ⑤ 前測與後測（共用邏輯） ====================
@@ -753,6 +790,7 @@ sidebar_progress()
 ROUTES = {
     "welcome": render_welcome,
     "onboarding": render_onboarding,
+    "expectation": render_expectation,
     "pretest": lambda: render_test("pre"),
     "cases": render_cases,
     "simulation": render_simulation,

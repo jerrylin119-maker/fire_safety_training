@@ -3,6 +3,7 @@
 ---------------------------------
 - expand_survey_df：把滿意度調查 JSON 回覆展開成「一題一欄」的表格
 - survey_summary：每題平均分數與回覆人數
+- expectation_summary / expand_expectation_df：課前期望調查的統計與展開
 - build_class_package：把某班別的完整資料打包成 ZIP（摘要報告 + 各項 CSV）
 """
 import io
@@ -50,6 +51,40 @@ def survey_summary(df: pd.DataFrame, questions: list) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+def expand_expectation_df(df: pd.DataFrame) -> pd.DataFrame:
+    """把勾選項目(JSON 清單)轉成「、」串起來的一欄，方便在 Excel 閱讀。"""
+    if df.empty:
+        return df
+    rows = []
+    for _, r in df.iterrows():
+        try:
+            picked = json.loads(r["selected"]) if r["selected"] else []
+        except (TypeError, ValueError):
+            picked = []
+        rows.append({
+            "student_id": r["student_id"], "name": r["name"], "venue": r["venue"],
+            "position": r["position"], "class_id": r["class_id"], "created_at": r["created_at"],
+            "期待項目": "、".join(picked), "其他想學習的內容": r["other_text"] or "",
+        })
+    return pd.DataFrame(rows)
+
+
+def expectation_summary(df: pd.DataFrame, options: list) -> pd.DataFrame:
+    """每個期待項目被勾選的人數與比例（含已被講師從題目移除、但學員曾勾選的舊項目）。"""
+    total = len(df)
+    counts: dict[str, int] = {o["text"]: 0 for o in options}
+    for _, r in df.iterrows():
+        try:
+            picked = json.loads(r["selected"]) if r["selected"] else []
+        except (TypeError, ValueError):
+            picked = []
+        for text in picked:
+            counts[text] = counts.get(text, 0) + 1
+    rows = [{"期待項目": t, "人數": c, "比例%": round(c / total * 100) if total else 0}
+            for t, c in counts.items()]
+    return pd.DataFrame(rows).sort_values("人數", ascending=False, kind="stable").reset_index(drop=True)
+
+
 def build_class_summary_md(class_id: str) -> str:
     students_df = db.get_students_df(class_id)
     scores_df = db.get_test_scores_df(class_id)
@@ -65,6 +100,23 @@ def build_class_summary_md(class_id: str) -> str:
         lines.append("### 場所類別分布")
         for venue, cnt in students_df["venue"].value_counts().items():
             lines.append(f"- {venue}：{cnt} 人")
+
+    lines.append("")
+    lines.append("## 課前調查：學員來上課想獲得什麼")
+    expect_df = db.get_expectation_df(class_id)
+    if expect_df.empty:
+        lines.append("（尚無學員填寫）")
+    else:
+        lines.append(f"- 共 {len(expect_df)} 人填寫（簽到 {len(students_df)} 人）")
+        for _, r in expectation_summary(expect_df, dl.get_expectation().get("options", [])).iterrows():
+            if r["人數"] > 0:
+                lines.append(f"- {r['期待項目']}：{r['人數']} 人（{r['比例%']}%）")
+        others = [t for t in expect_df["other_text"].fillna("").tolist() if t.strip()]
+        if others:
+            lines.append("")
+            lines.append("### 學員補充想學習的內容")
+            for t in others:
+                lines.append(f"- {t.strip()}")
 
     lines.append("")
     lines.append("## 前後測成績")
@@ -126,6 +178,7 @@ def build_class_package(class_id: str) -> bytes:
         zf.writestr("test_scores.csv", csv(db.get_test_scores_df(class_id)))
         zf.writestr("case_answers.csv", csv(db.get_case_answers_df(class_id)))
         zf.writestr("sim_log.csv", csv(db.get_sim_log_df(class_id)))
+        zf.writestr("expectation.csv", csv(expand_expectation_df(db.get_expectation_df(class_id))))
         zf.writestr("survey.csv", csv(survey_df))
     buf.seek(0)
     return buf.getvalue()
